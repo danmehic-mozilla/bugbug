@@ -4,6 +4,7 @@
 import {
   api,
   type BugQuery,
+  type Review,
   type RunInfo,
   type RunOptions,
   type TargetConfig,
@@ -225,6 +226,7 @@ async function loadReview(run: RunState) {
       attachments: [...review.draft.attachments],
       addExceptions: false,
       close: review.draft.close,
+      needinfo: defaultNeedinfo(review, false),
       resolution: review.draft.resolution ?? "INVALID",
       force: false,
       busy: false,
@@ -281,6 +283,17 @@ function withoutExceptionTags(changes: Record<string, unknown>) {
   );
 }
 
+/**
+ * Whether "needinfo the reporter" starts ticked: not when the exception tags
+ * are added, since deploying the exceptions needinfos the reporter.
+ */
+function defaultNeedinfo(review: Review, addExceptions: boolean): boolean {
+  const tagsAdded =
+    !!review.result?.exception_records.length &&
+    (!exceptionTagsOptional(review.result) || addExceptions);
+  return review.draft.needinfo && !!review.draft.reporter && !tagsAdded;
+}
+
 /** Add the draft's exception tag fields to the field changes, or remove them. */
 export function setAddExceptions(on: boolean) {
   const { draft } = store.run!.review!;
@@ -300,6 +313,7 @@ export function setAddExceptions(on: boolean) {
   }
   actions.error = null;
   actions.addExceptions = on;
+  actions.needinfo = defaultNeedinfo(store.run!.review!, on);
   actions.changes = JSON.stringify(changes);
 }
 
@@ -319,12 +333,15 @@ export async function applyActions() {
     return;
   }
   const fields = Object.keys(changes);
+  const reporter = run.review!.draft.reporter;
+  const needinfo = actions.needinfo && reporter ? reporter : null;
   const parts = [
     actions.comment.trim() && "a comment",
     fields.length && `field changes (${fields.join(", ")})`,
     actions.attachments.length &&
       `${actions.attachments.length} screenshot(s) combined into one image`,
     actions.close && `close as RESOLVED ${actions.resolution}`,
+    needinfo && `a needinfo for ${needinfo}`,
   ].filter(Boolean);
   if (!parts.length) {
     actions.error = "Nothing to post";
@@ -341,6 +358,7 @@ export async function applyActions() {
       changes,
       attachments: [...actions.attachments],
       resolution: actions.close ? actions.resolution : null,
+      needinfo,
       force: actions.force,
     });
     actions.force = false;

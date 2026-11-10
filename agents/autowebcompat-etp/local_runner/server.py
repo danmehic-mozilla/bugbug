@@ -172,6 +172,17 @@ TURN_RE = re.compile(r"^--- turn (\d+) ---$")
 COST_RE = re.compile(r"cost=\$([\d.]+)")
 
 
+class Resolution(StrEnum):
+    """Bugzilla resolutions a bug can be closed with (DUPLICATE needs a dup_id)."""
+
+    FIXED = "FIXED"
+    INVALID = "INVALID"
+    WONTFIX = "WONTFIX"
+    INACTIVE = "INACTIVE"
+    WORKSFORME = "WORKSFORME"
+    INCOMPLETE = "INCOMPLETE"
+
+
 class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -294,7 +305,9 @@ class ApplyRequest(BaseModel):
     changes: dict[str, Any] = {}
     attachments: list[str] = []
     # Close the bug as RESOLVED with this resolution.
-    resolution: str | None = None
+    resolution: Resolution | None = None
+    # Set a needinfo flag for this Bugzilla account.
+    needinfo: str | None = None
     force: bool = False
 
 
@@ -610,26 +623,59 @@ def draft_comment(result: dict[str, Any]) -> str:
     return "\n".join(out).strip() + "\n"
 
 
-# The resolution to suggest when closing the bug, by the agent's
-# failure_reason, and whether "close the bug" starts ticked. Outcomes that
-# still need work (a fix to land, more investigation) have none.
-RESOLUTIONS: dict[str, tuple[str, bool]] = {
-    "not_etp": ("INVALID", False),
-    "not_reproducible": ("WORKSFORME", True),
-    "fixed_by_list_update": ("WORKSFORME", True),
-    "broken_in_standard": ("INVALID", True),
+@dataclass(frozen=True)
+class OutcomeActions:
+    """The Bugzilla actions the form suggests for an outcome."""
+
+    # Resolution to suggest when closing the bug; None for outcomes that still
+    # need work (a fix to land, more investigation).
+    resolution: Resolution | None = None
+    # Whether "close the bug" starts ticked.
+    close: bool = False
+    # Whether "needinfo the reporter" starts ticked. When the exception tags
+    # are added, the step that deploys the exceptions needinfos the reporter,
+    # so the UI unticks it then.
+    needinfo: bool = False
+
+
+# By the agent's failure_reason; other outcomes get the defaults.
+OUTCOME_ACTIONS = {
+    "not_etp": OutcomeActions(Resolution.INVALID),
+    "not_reproducible": OutcomeActions(
+        Resolution.WORKSFORME, close=True, needinfo=True
+    ),
+    "fixed_by_list_update": OutcomeActions(
+        Resolution.WORKSFORME, close=True, needinfo=True
+    ),
+    "broken_in_baseline": OutcomeActions(Resolution.INVALID, close=True),
     # Left open while the reviewer decides whether to add the exceptions.
-    "anti_adblock": ("WONTFIX", False),
-    "blocked": ("INCOMPLETE", False),
-    "blocked_captcha": ("INCOMPLETE", False),
-    "blocked_geo": ("INCOMPLETE", False),
-    "login": ("INCOMPLETE", False),
-    "down": ("INCOMPLETE", False),
+    "anti_adblock": OutcomeActions(Resolution.WONTFIX),
+    "blocked": OutcomeActions(Resolution.INCOMPLETE),
+    "blocked_captcha": OutcomeActions(Resolution.INCOMPLETE),
+    "blocked_geo": OutcomeActions(Resolution.INCOMPLETE),
+    "login": OutcomeActions(Resolution.INCOMPLETE),
+    "down": OutcomeActions(Resolution.INCOMPLETE),
 }
 
 
-def draft_resolution(result: dict[str, Any] | None) -> tuple[str | None, bool]:
-    return RESOLUTIONS.get((result or {}).get("failure_reason") or "", (None, False))
+def draft_outcome_actions(result: dict[str, Any] | None) -> OutcomeActions:
+    reason = (result or {}).get("failure_reason") or ""
+    return OUTCOME_ACTIONS.get(reason, OutcomeActions())
+
+
+def bug_reporter(bug_id: int | None) -> str | None:
+    if not bug_id:
+        return None
+    try:
+        bug = bugzilla(
+            "GET",
+            f"bug/{bug_id}",
+            params={"include_fields": "creator"},
+            auth_required=False,
+        )["bugs"][0]
+    except HTTPException, requests.RequestException, KeyError, IndexError:
+        return None
+    return bug.get("creator")
 
 
 EXCEPTION_CATEGORY_TAG_RE = re.compile(r"\[exception-(baseline|convenience)\]")
@@ -1042,7 +1088,7 @@ def review(run_id: str) -> dict[str, Any]:
         if (path / key).is_file()
     }
     bug_id = guess_bug_id(path, result)
-    resolution, close = draft_resolution(result)
+    outcome = draft_outcome_actions(result)
     return {
         "summary": summary,
         "result": result,
@@ -1054,8 +1100,10 @@ def review(run_id: str) -> dict[str, Any]:
             "bug_id": bug_id,
             "comment": draft_comment(result) if result else "",
             "changes": draft_changes(result, bug_id) if result else {},
-            "resolution": resolution,
-            "close": close,
+            "resolution": outcome.resolution,
+            "close": outcome.close,
+            "reporter": bug_reporter(bug_id),
+            "needinfo": outcome.needinfo,
             "attachments": list(screenshots),
         },
     }
@@ -1092,6 +1140,8 @@ def apply(run_id: str, req: ApplyRequest) -> dict[str, Any]:
     body = dict(req.changes)
     if req.resolution:
         body |= {"status": "RESOLVED", "resolution": req.resolution}
+    if req.needinfo:
+        body["flags"] = [{"name": "needinfo", "status": "?", "requestee": req.needinfo}]
     comment = req.comment if req.comment.strip() else None
     # The comment rides on the screenshot attachment, so the image shows in
     # the same post; without one it goes in with the field changes.

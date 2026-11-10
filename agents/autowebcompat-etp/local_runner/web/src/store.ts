@@ -44,6 +44,7 @@ export interface ActionsState {
   addExceptions: boolean;
   close: boolean;
   resolution: Resolution;
+  needinfo: boolean;
   force: boolean;
   busy: boolean;
   error: string | null;
