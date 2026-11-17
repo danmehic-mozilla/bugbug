@@ -21,8 +21,7 @@ Each run tests one **target configuration**:
 - **ETP level:** Off, Standard or Strict (default Strict)
 - **Filter lists:** EasyList and/or EasyPrivacy, layered on top of the ETP level
   and blocking together with it
-- **Private Browsing Mode:** test in a fresh private window. Standard ETP blocks
-  trackers only there.
+- **Private Browsing Mode:** test in a fresh private window
 
 The agent compares the target with a **baseline** where the site should work:
 ETP Standard for a Strict target, otherwise ETP Off without lists, in the same
@@ -76,20 +75,3 @@ uv run --frozen --package hackbot-agent-autowebcompat-etp --with pytest \
 ```
 
 The local runner's tests are listed in its README.
-
-## Changes in this fork
-
-This fork ([danmehic-mozilla/bugbug](https://github.com/danmehic-mozilla/bugbug))
-builds on [mozmraiber/bugbug](https://github.com/mozmraiber/bugbug)'s
-`autowebcompat-etp-agent` branch:
-
-- [#1](https://github.com/danmehic-mozilla/bugbug/pull/1): target configurations
-  (ETP level + filter lists + Private Browsing Mode), the retest without lists,
-  recorded list versions, and native runs with a local Firefox build
-- [#2](https://github.com/danmehic-mozilla/bugbug/pull/2): clearer configurations,
-  compare view and runs panel in the local runner
-- [#3](https://github.com/danmehic-mozilla/bugbug/pull/3): copy buttons for the
-  bug ID, Bugzilla link and shims
-- [#4](https://github.com/danmehic-mozilla/bugbug/pull/4): filter-list cache with
-  "Fetch latest list(s)", model suggestions, the result header, runner tests and a
-  broker shutdown fix
