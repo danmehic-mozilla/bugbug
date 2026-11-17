@@ -1132,7 +1132,16 @@ def start_broker() -> subprocess.Popen:
     )
 
 
+def exit_on_signal(signum: int, frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
 if __name__ == "__main__":
+    # uvicorn shuts down on SIGTERM/SIGHUP, restores the handlers it found and
+    # re-raises the signal. With the default handlers that kills the process
+    # before `finally` runs and leaves the broker behind; these exit through it.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, exit_on_signal)
     broker = start_broker() if LOCAL_FIREFOX else None
     try:
         uvicorn.run(
