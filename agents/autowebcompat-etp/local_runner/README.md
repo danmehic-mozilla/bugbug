@@ -58,7 +58,7 @@ Then open <http://127.0.0.1:8000>. The server serves the built UI from
 
 Docker runs download a fresh Nightly in a Linux container. To test a Firefox you
 built yourself (on macOS, say), start the server with `LOCAL_FIREFOX` set to the
-build's binary. The form then offers *Run in: Local build / Docker* per run;
+build's binary. The form then offers _Run in: Local build / Docker_ per run;
 local runs start the agent and the Bugzilla broker on this machine instead.
 
 Install the patched DevTools MCP into the agent directory once (and again after
@@ -84,6 +84,16 @@ separate home under `~/hackbot/firefox-home`. Without Xvfb, a run that isn't
 headless opens a real Firefox window. `BROKER_PORT` (default 8765) sets the
 broker's port.
 
+## Filter lists
+
+Runs that use EasyList or EasyPrivacy load them from a copy the server keeps in
+`~/hackbot/filter-lists` (next to `HACKBOT_ARTIFACTS`) and serves at
+`/api/filter-lists/<name>.txt`, instead of having every Firefox download them
+from easylist.to. The server downloads a list before the first run that needs
+it; _Fetch latest list(s)_ in the Config section replaces both with the latest
+versions. Docker runs reach the server at `host.docker.internal`, which Docker
+Desktop provides.
+
 ## Working on the UI
 
 Keep the server running, and start the Vite dev server in a second terminal:
@@ -95,3 +105,13 @@ pnpm --dir agents/autowebcompat-etp/local_runner/web dev
 Open the URL that Vite prints. Vite reloads the page when you save a change
 and proxies `/api` to the server at `http://127.0.0.1:8000`. If the server
 runs somewhere else, set `API_URL` for the dev server.
+
+## Tests
+
+From the repo root:
+
+```sh
+uv run --no-project --python 3.14 --with pytest --with fastapi --with httpx \
+  --with python-dotenv --with pillow --with requests --with uvicorn \
+  --with anthropic pytest -q agents/autowebcompat-etp/local_runner/tests
+```

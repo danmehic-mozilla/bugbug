@@ -1,8 +1,15 @@
 import { useId } from "react";
 import { useSnapshot } from "valtio";
 
+import { fetchFilterLists } from "../actions";
 import type { Effort, EtpLevel, RunOptions } from "../api";
-import { baselineConfig, configLabel, EFFORTS } from "../format";
+import {
+  baselineConfig,
+  configLabel,
+  EFFORTS,
+  formatListVersion,
+  formatTime,
+} from "../format";
 import { store } from "../store";
 
 interface Props {
@@ -25,10 +32,13 @@ export function RunOptionsFields({
   compact = false,
 }: Props) {
   const snap = useSnapshot(options, { sync: true });
-  const localFirefox = useSnapshot(store).config?.local_firefox ?? null;
+  const { config, models, filterLists } = useSnapshot(store);
+  const localFirefox = config?.local_firefox ?? null;
   const native = !!localFirefox && snap.native !== false;
   const runIn = useId();
   const etpName = useId();
+  const modelList = useId();
+  const modelName = models?.models.find((m) => m.id === snap.model);
 
   const maxTurns = (
     <div>
@@ -79,6 +89,38 @@ export function RunOptionsFields({
         />
         EasyPrivacy
       </label>
+      <div className="meta">
+        Runs load the runner's cached lists:{" "}
+        {filterLists.lists?.map((list, i) => (
+          <span
+            key={list.name}
+            title={list.modified ? `fetched ${formatTime(list.modified)}` : ""}
+          >
+            {i > 0 && ", "}
+            {list.label}{" "}
+            {list.present ? (
+              <b>
+                {list.version
+                  ? formatListVersion(list.version)
+                  : "unknown version"}
+              </b>
+            ) : (
+              "not cached yet (fetched before the first run that uses it)"
+            )}
+          </span>
+        )) ?? "…"}{" "}
+        <button
+          type="button"
+          className="secondary"
+          disabled={filterLists.busy}
+          onClick={fetchFilterLists}
+        >
+          {filterLists.busy ? "Fetching…" : "Fetch latest list(s)"}
+        </button>
+      </div>
+      {filterLists.error && (
+        <div className="note err">Filter lists: {filterLists.error}</div>
+      )}
       <label className="check">
         <input
           type="checkbox"
@@ -116,9 +158,23 @@ export function RunOptionsFields({
           <label>Model</label>
           <input
             placeholder="default"
+            list={modelList}
             value={snap.model ?? ""}
             onChange={(e) => (options.model = e.target.value || null)}
           />
+          <datalist id={modelList}>
+            {models?.models.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.display_name}
+              </option>
+            ))}
+          </datalist>
+          {modelName && <div className="meta">{modelName.display_name}</div>}
+          {models?.fallback && (
+            <div className="meta" title={models.error}>
+              Couldn't list models; showing a fixed list.
+            </div>
+          )}
         </div>
         <div>
           <label>Effort</label>

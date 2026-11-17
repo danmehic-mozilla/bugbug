@@ -2,7 +2,12 @@ import { useSnapshot } from "valtio";
 
 import { closeCompare, selectRun } from "../actions";
 import { api, type CompareRow, type FilterList } from "../api";
-import { baselineConfig, configLabel, formatCost } from "../format";
+import {
+  baselineConfig,
+  configLabel,
+  formatCost,
+  formatListVersion,
+} from "../format";
 import { store } from "../store";
 import { ConfigLabel } from "./ConfigLabel";
 import { StatusBadge } from "./StatusBadge";
@@ -34,12 +39,6 @@ function Verdict({ value }: { value: boolean | null | undefined }) {
   if (value === true) return <span className="verdict broken">✗ Broken</span>;
   if (value === false) return <span className="verdict works">✓ Works</span>;
   return <span className="verdict untested">– Not tested</span>;
-}
-
-/** 202611171744 -> 2026-11-17 17:44; anything else unchanged. */
-function formatListVersion(version: string): string {
-  const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(version);
-  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : version;
 }
 
 /** One row per run of a bug, to compare how each target configuration behaves. */

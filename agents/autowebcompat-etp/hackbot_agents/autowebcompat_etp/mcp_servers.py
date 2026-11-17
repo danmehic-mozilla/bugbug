@@ -95,6 +95,10 @@ def build_firefox_devtools_server(
         env["ETP_PRIVATE"] = "1"
     if content_blocking_log_file is not None:
         env["ETP_CONTENT_BLOCKING_LOG_FILE"] = str(content_blocking_log_file)
+    # Set by the local runner: load the filter lists from its cached copies
+    # instead of from easylist.to.
+    if base_url := os.environ.get("ETP_FILTER_LIST_BASE_URL"):
+        env["ETP_FILTER_LIST_BASE_URL"] = base_url
 
     return McpStdioServerConfig(
         command=resolve_bin("firefox-devtools-mcp-moz"),
