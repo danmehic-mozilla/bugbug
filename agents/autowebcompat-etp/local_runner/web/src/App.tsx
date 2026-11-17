@@ -55,7 +55,6 @@ export function App() {
         >
           Queue open bugs…
         </button>
-        <h2>Runs</h2>
         <RunList />
       </aside>
       <main>

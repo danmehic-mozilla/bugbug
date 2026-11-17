@@ -2,7 +2,7 @@ import { useSnapshot } from "valtio";
 
 import { closeCompare, selectRun } from "../actions";
 import { api, type CompareRow, type FilterList } from "../api";
-import { brokenLabel, configLabel, formatCost } from "../format";
+import { configLabel, formatCost } from "../format";
 import { store } from "../store";
 import { StatusBadge } from "./StatusBadge";
 
@@ -23,6 +23,24 @@ function rowConfig(row: {
           private: row.private,
         }
   );
+}
+
+const LIST_NAMES: Record<string, string> = {
+  easylist: "EasyList",
+  easyprivacy: "EasyPrivacy",
+};
+
+/** Broken / works / not tested, as a colored pill with an icon. */
+function Verdict({ value }: { value: boolean | null | undefined }) {
+  if (value === true) return <span className="verdict broken">✗ Broken</span>;
+  if (value === false) return <span className="verdict works">✓ Works</span>;
+  return <span className="verdict untested">– Not tested</span>;
+}
+
+/** 202611171744 -> 2026-11-17 17:44; anything else unchanged. */
+function formatListVersion(version: string): string {
+  const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(version);
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : version;
 }
 
 /** One row per run of a bug, to compare how each target configuration behaves. */
@@ -67,47 +85,67 @@ export function CompareView() {
                   </a>
                 </td>
                 <td>
-                  {row.has_result ? brokenLabel(row.broken_in_baseline) : ""}
+                  {row.has_result ? (
+                    <Verdict value={row.broken_in_baseline} />
+                  ) : (
+                    <span className="meta">—</span>
+                  )}
                 </td>
                 <td>
-                  {row.has_result ? brokenLabel(row.broken_in_target) : ""}
+                  {row.has_result ? (
+                    <Verdict value={row.broken_in_target} />
+                  ) : (
+                    <span className="meta">—</span>
+                  )}
                 </td>
                 <td>
-                  {row.broken_without_lists == null
-                    ? "—"
-                    : brokenLabel(row.broken_without_lists)}
+                  {row.broken_without_lists == null ? (
+                    <span className="meta">—</span>
+                  ) : (
+                    <Verdict value={row.broken_without_lists} />
+                  )}
                 </td>
-                <td className="meta">
-                  {Object.entries(row.blocked_trackers).map(([stage, n]) => (
-                    <div key={stage}>
-                      {stage}: {n}
-                    </div>
-                  ))}
+                <td>
+                  {Object.entries(row.blocked_trackers)
+                    .filter(([, n]) => n != null)
+                    .map(([stage, n]) => (
+                      <span
+                        key={stage}
+                        className="chip"
+                        title={`Blocked trackers at the ${stage} screenshot`}
+                      >
+                        {stage} <b>{n}</b>
+                      </span>
+                    ))}
                 </td>
-                <td className="meta">
+                <td>
                   {Object.entries(row.filter_list_versions ?? {}).map(
                     ([name, version]) => (
-                      <div key={name}>
-                        {name}: {version}
-                      </div>
+                      <span key={name} className="chip" title={version}>
+                        {LIST_NAMES[name] ?? name}{" "}
+                        <b>{formatListVersion(version)}</b>
+                      </span>
                     )
                   )}
                 </td>
                 <td>
-                  {Object.entries(row.screenshots).map(([stage, key]) => (
-                    <a
-                      key={stage}
-                      href={api.fileUrl(row.run_id, key)}
-                      target="_blank"
-                      title={row.screenshot_labels[stage] ?? stage}
-                    >
-                      <img
-                        className="thumb"
-                        src={api.fileUrl(row.run_id, key)}
-                        alt={stage}
-                      />
-                    </a>
-                  ))}
+                  <div className="thumbs">
+                    {Object.entries(row.screenshots).map(([stage, key]) => (
+                      <a
+                        key={stage}
+                        href={api.fileUrl(row.run_id, key)}
+                        target="_blank"
+                        title={row.screenshot_labels[stage] ?? stage}
+                      >
+                        <img
+                          className="thumb"
+                          src={api.fileUrl(row.run_id, key)}
+                          alt={stage}
+                        />
+                        <span className="meta">{stage}</span>
+                      </a>
+                    ))}
+                  </div>
                 </td>
                 <td>
                   <StatusBadge status={row.status} /> {formatCost(row.cost)}
