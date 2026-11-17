@@ -80,18 +80,6 @@ export async function startRun() {
   start.busy = true;
   start.error = null;
   try {
-    if (start.configs.length) {
-      if (!start.bugId)
-        throw new Error("Comparing configurations needs a bug ID");
-      const runs = await api.startBatch({
-        ...start.options,
-        bug_ids: [Number(start.bugId)],
-        configs: [...start.configs],
-      });
-      loadRuns();
-      selectRun(runs[0].run_id);
-      return;
-    }
     const run = await api.startRun({
       ...start.options,
       bug_id: start.bugId ? Number(start.bugId) : null,
