@@ -3,6 +3,7 @@ import { useSnapshot } from "valtio";
 import { openCompare } from "../actions";
 import { store } from "../store";
 import { ActionsForm } from "./ActionsForm";
+import { CopyButton } from "./CopyButton";
 import { LogView } from "./LogView";
 import { Progress } from "./Progress";
 import { ResultView } from "./ResultView";
@@ -27,7 +28,8 @@ export function RunView() {
             )}
           >
             Compare all runs of bug {info.params.bug_id}
-          </a>
+          </a>{" "}
+          <CopyButton text={String(info.params.bug_id)} label="copy bug ID" />
         </p>
       )}
       {!!info?.params.bug_id && config && (
@@ -39,7 +41,11 @@ export function RunView() {
             rel="noreferrer"
           >
             {`${config.bugzilla}/show_bug.cgi?id=${info.params.bug_id}`}
-          </a>
+          </a>{" "}
+          <CopyButton
+            text={`${config.bugzilla}/show_bug.cgi?id=${info.params.bug_id}`}
+            label="copy link"
+          />
         </p>
       )}
       {info ? (

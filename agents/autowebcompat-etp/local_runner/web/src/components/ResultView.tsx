@@ -3,6 +3,7 @@ import { useSnapshot } from "valtio";
 import { api, type EtpLevel, type FilterList } from "../api";
 import { brokenLabel, formatCost } from "../format";
 import { store } from "../store";
+import { CopyButton } from "./CopyButton";
 
 const ETP_NAMES = {
   off: "ETP Off",
@@ -24,11 +25,28 @@ function configLabels(result: {
   };
 }
 
-function Json({ title, value }: { title: string; value: unknown }) {
+function Json({
+  title,
+  value,
+  copy = false,
+}: {
+  title: string;
+  value: unknown;
+  copy?: boolean;
+}) {
+  const text = JSON.stringify(value, null, 2);
   return (
     <>
-      <h3>{title}</h3>
-      <pre className="log">{JSON.stringify(value, null, 2)}</pre>
+      <h3>
+        {title}
+        {copy && (
+          <>
+            {" "}
+            <CopyButton text={text} label="copy" />
+          </>
+        )}
+      </h3>
+      <pre className="log">{text}</pre>
     </>
   );
 }
@@ -160,7 +178,7 @@ export function ResultView() {
         />
       )}
       {result.proposed_shim && (
-        <Json title="Proposed shim" value={result.proposed_shim} />
+        <Json title="Proposed shim" value={result.proposed_shim} copy />
       )}
       {result.existing_exceptions === null && (
         <div className="note">Could not fetch the existing exception list.</div>
@@ -175,6 +193,7 @@ export function ResultView() {
         <Json
           title="Overlapping existing shims"
           value={result.existing_shims}
+          copy
         />
       )}
 
