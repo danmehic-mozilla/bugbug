@@ -2,8 +2,9 @@ import { useSnapshot } from "valtio";
 
 import { closeCompare, selectRun } from "../actions";
 import { api, type CompareRow, type FilterList } from "../api";
-import { configLabel, formatCost } from "../format";
+import { formatCost } from "../format";
 import { store } from "../store";
+import { ConfigLabel } from "./ConfigLabel";
 import { StatusBadge } from "./StatusBadge";
 
 function rowConfig(row: {
@@ -11,18 +12,16 @@ function rowConfig(row: {
   etp: CompareRow["etp"];
   private: CompareRow["private"];
   filter_lists: readonly FilterList[] | null;
-}): string {
+}) {
   const lists = row.filter_lists ?? [];
-  return configLabel(
-    row.params.etp
-      ? row.params
-      : {
-          etp: row.etp,
-          easylist: lists.includes("easylist"),
-          easyprivacy: lists.includes("easyprivacy"),
-          private: row.private,
-        }
-  );
+  return row.params.etp
+    ? row.params
+    : {
+        etp: row.etp,
+        easylist: lists.includes("easylist"),
+        easyprivacy: lists.includes("easyprivacy"),
+        private: row.private,
+      };
 }
 
 const LIST_NAMES: Record<string, string> = {
@@ -81,7 +80,11 @@ export function CompareView() {
                     onClick={(e) => (e.preventDefault(), selectRun(row.run_id))}
                     title={row.run_id}
                   >
-                    {rowConfig(row) || row.run_id}
+                    {rowConfig(row).etp ? (
+                      <ConfigLabel config={rowConfig(row)} />
+                    ) : (
+                      row.run_id
+                    )}
                   </a>
                 </td>
                 <td>

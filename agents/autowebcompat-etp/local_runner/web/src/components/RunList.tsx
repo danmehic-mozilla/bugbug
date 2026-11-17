@@ -2,8 +2,9 @@ import { useState } from "react";
 import { useSnapshot } from "valtio";
 
 import { selectRun } from "../actions";
-import { configLabel, formatCost, formatTime } from "../format";
+import { formatCost, formatTime } from "../format";
 import { store } from "../store";
+import { ConfigLabel } from "./ConfigLabel";
 import { RunBadges } from "./StatusBadge";
 
 /** How many of the latest runs the list shows until it is expanded. */
@@ -42,9 +43,7 @@ export function RunList() {
           onClick={() => selectRun(run.run_id)}
         >
           <div className="id">{run.run_id}</div>
-          {configLabel(run.params) && (
-            <div className="meta">{configLabel(run.params)}</div>
-          )}
+          <ConfigLabel config={run.params} className="meta" />
           <div className="meta">
             <RunBadges run={run} /> {formatTime(run.started ?? run.queued)}
             {run.turns ? ` · ${run.turns} turns` : ""}

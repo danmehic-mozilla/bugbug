@@ -13,7 +13,7 @@ interface Props {
 }
 
 const ETP_LEVELS: [EtpLevel, string][] = [
-  ["off", "ETP off"],
+  ["off", "ETP Off"],
   ["standard", "ETP Standard"],
   ["strict", "ETP Strict"],
 ];
@@ -85,11 +85,11 @@ export function RunOptionsFields({
           checked={snap.private}
           onChange={(e) => (options.private = e.target.checked)}
         />
-        Private window
+        Private Browsing Mode
       </label>
       {snap.etp === "standard" && !snap.private && (
         <div className="note">
-          Standard blocks trackers only in private windows.
+          Standard blocks trackers only in Private Browsing Mode.
         </div>
       )}
       {snap.etp === "off" && !snap.easylist && !snap.easyprivacy && (
