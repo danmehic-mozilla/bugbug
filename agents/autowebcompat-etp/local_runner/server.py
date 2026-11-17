@@ -172,6 +172,17 @@ TURN_RE = re.compile(r"^--- turn (\d+) ---$")
 COST_RE = re.compile(r"cost=\$([\d.]+)")
 
 
+class Resolution(StrEnum):
+    """Bugzilla resolutions a bug can be closed with (DUPLICATE needs a dup_id)."""
+
+    FIXED = "FIXED"
+    INVALID = "INVALID"
+    WONTFIX = "WONTFIX"
+    INACTIVE = "INACTIVE"
+    WORKSFORME = "WORKSFORME"
+    INCOMPLETE = "INCOMPLETE"
+
+
 class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -293,6 +304,10 @@ class ApplyRequest(BaseModel):
     comment: str = ""
     changes: dict[str, Any] = {}
     attachments: list[str] = []
+    # Close the bug as RESOLVED with this resolution.
+    resolution: Resolution | None = None
+    # Set a needinfo flag for this Bugzilla account.
+    needinfo: str | None = None
     force: bool = False
 
 
@@ -608,11 +623,51 @@ def draft_comment(result: dict[str, Any]) -> str:
     return "\n".join(out).strip() + "\n"
 
 
+@dataclass(frozen=True)
+class OutcomeActions:
+    """The Bugzilla actions the form suggests for an outcome."""
+
+    # Resolution to suggest when closing the bug; None for outcomes that still
+    # need work (a fix to land, more investigation).
+    resolution: Resolution | None = None
+    # Whether "close the bug" starts ticked.
+    close: bool = False
+    # Whether "needinfo the reporter" starts ticked. When the exception tags
+    # are added, the step that deploys the exceptions needinfos the reporter,
+    # so the UI unticks it then.
+    needinfo: bool = False
+
+
+# By the agent's failure_reason; other outcomes get the defaults.
+OUTCOME_ACTIONS = {
+    "not_etp": OutcomeActions(Resolution.INVALID),
+    "not_reproducible": OutcomeActions(
+        Resolution.WORKSFORME, close=True, needinfo=True
+    ),
+    "fixed_by_list_update": OutcomeActions(
+        Resolution.WORKSFORME, close=True, needinfo=True
+    ),
+    "broken_in_baseline": OutcomeActions(Resolution.INVALID, close=True),
+    # Left open while the reviewer decides whether to add the exceptions.
+    "anti_adblock": OutcomeActions(Resolution.WONTFIX),
+    "blocked": OutcomeActions(Resolution.INCOMPLETE),
+    "blocked_captcha": OutcomeActions(Resolution.INCOMPLETE),
+    "blocked_geo": OutcomeActions(Resolution.INCOMPLETE),
+    "login": OutcomeActions(Resolution.INCOMPLETE),
+    "down": OutcomeActions(Resolution.INCOMPLETE),
+}
+
+
+def draft_outcome_actions(result: dict[str, Any] | None) -> OutcomeActions:
+    reason = (result or {}).get("failure_reason") or ""
+    return OUTCOME_ACTIONS.get(reason, OutcomeActions())
+
+
 EXCEPTION_CATEGORY_TAG_RE = re.compile(r"\[exception-(baseline|convenience)\]")
 DIAGNOSIS_LINE_PREFIXES = ("trackers-blocked:", "classifier-features:")
 
 
-def draft_changes(result: dict[str, Any], bug_id: int | None) -> dict[str, Any]:
+def draft_changes(result: dict[str, Any], bug: dict[str, Any]) -> dict[str, Any]:
     """Field edits that add the agent's diagnosis tags and triage.
 
     Bugzilla replaces the whiteboard and user story whole, so the tags are
@@ -626,19 +681,8 @@ def draft_changes(result: dict[str, Any], bug_id: int | None) -> dict[str, Any]:
         for field in ("severity", "priority")
         if (value := result.get(field))
     }
-    if not bug_id or not (tags or lines or triage):
+    if not (tags or lines or triage):
         return {}
-    try:
-        bug = bugzilla(
-            "GET",
-            f"bug/{bug_id}",
-            params={"include_fields": "whiteboard,cf_user_story,severity,priority"},
-            auth_required=False,
-        )["bugs"][0]
-    except HTTPException, requests.RequestException, KeyError, IndexError:
-        # Without the current values, a draft would clobber the fields.
-        return {}
-
     changes = {
         field: value for field, value in triage.items() if bug.get(field) == "--"
     }
@@ -1018,6 +1062,7 @@ def review(run_id: str) -> dict[str, Any]:
         if (path / key).is_file()
     }
     bug_id = guess_bug_id(path, result)
+    outcome = draft_outcome_actions(result)
     return {
         "summary": summary,
         "result": result,
@@ -1028,10 +1073,35 @@ def review(run_id: str) -> dict[str, Any]:
         "draft": {
             "bug_id": bug_id,
             "comment": draft_comment(result) if result else "",
-            "changes": draft_changes(result, bug_id) if result else {},
+            "resolution": outcome.resolution,
+            "close": outcome.close,
+            "needinfo": outcome.needinfo,
             "attachments": list(screenshots),
         },
     }
+
+
+# Separate from the review, which it would slow down: the draft field changes
+# and the reporter need the bug's current fields from Bugzilla.
+@app.get("/api/runs/{run_id}/bug-draft")
+def bug_draft(run_id: str) -> dict[str, Any]:
+    path = run_dir(run_id)
+    summary = read_json(path / "summary.json")
+    if summary is None:
+        raise HTTPException(404, "no summary.json yet")
+    result = (summary.get("findings") or {}).get("result")
+    bug_id = guess_bug_id(path, result)
+    if not result or not bug_id:
+        return {"changes": {}, "reporter": None}
+    bugs = bugzilla(
+        "GET",
+        f"bug/{bug_id}",
+        params={"include_fields": "whiteboard,cf_user_story,severity,priority,creator"},
+        auth_required=False,
+    ).get("bugs")
+    if not bugs:
+        raise HTTPException(404, f"bug {bug_id} not found")
+    return {"changes": draft_changes(result, bugs[0]), "reporter": bugs[0]["creator"]}
 
 
 @app.get("/api/runs/{run_id}/files/{key:path}")
@@ -1063,6 +1133,10 @@ def apply(run_id: str, req: ApplyRequest) -> dict[str, Any]:
         "error": None,
     }
     body = dict(req.changes)
+    if req.resolution:
+        body |= {"status": "RESOLVED", "resolution": req.resolution}
+    if req.needinfo:
+        body["flags"] = [{"name": "needinfo", "status": "?", "requestee": req.needinfo}]
     comment = req.comment if req.comment.strip() else None
     # The comment rides on the screenshot attachment, so the image shows in
     # the same post; without one it goes in with the field changes.

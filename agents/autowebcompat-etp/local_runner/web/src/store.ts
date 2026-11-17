@@ -5,6 +5,7 @@ import { proxy } from "valtio";
 
 import type {
   Applied,
+  BugDraft,
   Config,
   FilterListInfo,
   ModelList,
@@ -15,6 +16,7 @@ import type {
   TargetConfig,
   BugQuery,
   ListedBug,
+  Resolution,
   WhoAmI,
 } from "./api";
 
@@ -39,8 +41,13 @@ export interface ActionsState {
   comment: string;
   preview: boolean;
   changes: string;
+  /** Loaded after the review, as it needs Bugzilla; null while it loads. */
+  bugDraft: BugDraft | null;
   attachments: string[];
   addExceptions: boolean;
+  close: boolean;
+  resolution: Resolution;
+  needinfo: boolean;
   force: boolean;
   busy: boolean;
   error: string | null;

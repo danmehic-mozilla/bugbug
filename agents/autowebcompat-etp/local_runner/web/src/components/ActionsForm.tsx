@@ -5,10 +5,11 @@ import { useSnapshot, type Snapshot } from "valtio";
 import {
   applyActions,
   exceptionTagsOptional,
+  needinfoReporter,
   setAddExceptions,
   toggleAttachment,
 } from "../actions";
-import type { Applied } from "../api";
+import { RESOLUTIONS, type Applied, type Resolution } from "../api";
 import { store } from "../store";
 
 function describe(applied: Snapshot<Applied>): string {
@@ -30,6 +31,7 @@ export function ActionsForm() {
   if (!run?.review || !config) return null;
   const { screenshots, screenshot_labels, applied } = run.review;
   const stages = Object.keys(screenshots);
+  const reporter = needinfoReporter(snap, run.review);
 
   return (
     <>
@@ -111,6 +113,9 @@ export function ActionsForm() {
         <textarea
           rows={3}
           value={snap.changes}
+          placeholder={
+            snap.bugDraft ? undefined : "Drafting from the bug's fields…"
+          }
           onChange={(e) => (actions.changes = e.target.value)}
         />
         {exceptionTagsOptional(run.review.result) && (
@@ -118,6 +123,7 @@ export function ActionsForm() {
             <input
               type="checkbox"
               checked={snap.addExceptions}
+              disabled={!snap.bugDraft}
               onChange={(e) => setAddExceptions(e.target.checked)}
             />
             Tag the bug to add the proposed exceptions (they only get around an
@@ -141,6 +147,45 @@ export function ActionsForm() {
           <div className="meta">No screenshots.</div>
         )}
 
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={snap.close}
+            onChange={(e) => (actions.close = e.target.checked)}
+          />
+          Close the bug as RESOLVED{" "}
+          <select
+            value={snap.resolution}
+            onChange={(e) =>
+              (actions.resolution = e.target.value as Resolution)
+            }
+          >
+            {RESOLUTIONS.map((r) => (
+              <option key={r} value={r}>
+                {r}
+                {r === run.review!.draft.resolution ? " (suggested)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={snap.needinfo && !!reporter}
+            disabled={!reporter}
+            onChange={(e) => (actions.needinfo = e.target.checked)}
+          />
+          Needinfo the reporter (
+          {reporter ??
+            (!snap.bugDraft
+              ? "looking up…"
+              : snap.bugId !== String(run.review.draft.bug_id)
+                ? `only for bug ${run.review.draft.bug_id}`
+                : "unknown")}
+          ) to confirm the issue is fixed
+        </label>
+
         {applied && (
           <label className="check">
             <input
@@ -155,7 +200,7 @@ export function ActionsForm() {
         <p>
           <button
             onClick={applyActions}
-            disabled={snap.busy || (!!applied && !snap.force)}
+            disabled={snap.busy || !snap.bugDraft || (!!applied && !snap.force)}
           >
             Post to Bugzilla
           </button>
