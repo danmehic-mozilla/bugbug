@@ -73,10 +73,22 @@ const ETP_LEVELS = ["off", "standard", "strict"];
 // get_content_blocking_log records its logs under. Firefox starts in Standard.
 let etpCurrentMode = "standard";
 
-// Set by the harness in retest mode: keep the ETP exception list (both its
-// baseline and convenience entries) off, so old bugs are tested against the
-// bare lists. Skip-URL prefs still apply; they aren't part of either category.
-const ETP_DISABLE_EXCEPTIONS = process.env.ETP_DISABLE_EXCEPTIONS === "1";
+// Set by the harness to override whether each category of the ETP exception
+// list applies: "1" turns the category's allow_list pref on, "0" off, unset
+// leaves Firefox's default for the ETP category (Strict: baseline only;
+// Standard: both). Firefox ignores convenience while baseline is off. Skip-URL
+// prefs still apply; they aren't part of either category. The older
+// ETP_DISABLE_EXCEPTIONS=1 (retest mode) means both "0".
+const ETP_EXCEPTION_CATEGORIES = ["baseline", "convenience"];
+const ETP_EXCEPTION_OVERRIDES = Object.fromEntries(
+  ETP_EXCEPTION_CATEGORIES.map((c) => {
+    const value = process.env["ETP_EXCEPTIONS_" + c.toUpperCase()];
+    if (value === "1" || value === "0") {
+      return [c, value === "1"];
+    }
+    return [c, process.env.ETP_DISABLE_EXCEPTIONS === "1" ? false : null];
+  })
+);
 
 // Set by the harness for a Private Browsing run: every set_etp_mode closes the
 // private window it opened before and opens a fresh one, whose tab becomes the
@@ -212,7 +224,9 @@ const ETP_SELECTED_BROWSER_PREAMBLE = `
 const ETP_SET_MODE_SCRIPT = `
   // listUrls is the test_list_urls value when filter lists are selected, else
   // null.
-  const [etp, listUrls, disableExceptions] = arguments;
+  // exceptionOverrides maps baseline/convenience to true/false, or null for
+  // the category's default.
+  const [etp, listUrls, exceptionOverrides] = arguments;
   const category = "browser.contentblocking.category";
   const CC = "privacy.trackingprotection.content.";
   // ETP off: every tracker feature off and cookies unrestricted.
@@ -287,15 +301,15 @@ const ETP_SET_MODE_SCRIPT = `
     Services.prefs.setBoolPref(CC + "protection.enabled", true);
     Services.prefs.setStringPref(CC + "protection.test_list_urls", listUrls);
   }
-  // Switching the category resets these (Strict turns baseline on, Standard
-  // clears both), so turn them off again after it. ContentBlockingPrefs
-  // ignores them when matching the category, which stays as set above.
-  if (disableExceptions) {
-    for (const c of ["baseline", "convenience"]) {
-      Services.prefs.setBoolPref(
-        "privacy.trackingprotection.allow_list." + c + ".enabled",
-        false
-      );
+  // Switching the category resets these (Strict turns baseline on and
+  // convenience off, Standard clears both), so apply the overrides again after
+  // it. ContentBlockingPrefs ignores them when matching the category, which
+  // stays as set above.
+  const allowListPref = (c) =>
+    "privacy.trackingprotection.allow_list." + c + ".enabled";
+  for (const [c, value] of Object.entries(exceptionOverrides)) {
+    if (value !== null) {
+      Services.prefs.setBoolPref(allowListPref(c), value);
     }
   }
   const { ContentBlockingPrefs } = ChromeUtils.importESModule(
@@ -326,6 +340,12 @@ const ETP_SET_MODE_SCRIPT = `
   return {
     category: Services.prefs.getStringPref(category),
     changed,
+    exceptions: Object.fromEntries(
+      Object.keys(exceptionOverrides).map((c) => [
+        c,
+        Services.prefs.getBoolPref(allowListPref(c), false),
+      ])
+    ),
     engines: Services.prefs.getStringPref(CC + "protection.engines", ""),
     enginesPbmode: Services.prefs.getStringPref(
       CC + "protection.engines.pbmode",
@@ -510,6 +530,30 @@ async function etpWaitForFilterLists(lists) {
   }
 }
 
+// Which categories of the ETP exception list apply, from the allow_list prefs
+// set_etp_mode left, and whether this run overrides Firefox's defaults.
+function etpDescribeExceptions({ baseline, convenience }) {
+  const applying = baseline
+    ? convenience
+      ? "baseline and convenience entries apply"
+      : "only baseline entries apply (convenience off)"
+    : "no entries apply (baseline off" +
+      (convenience ? ", so the convenience pref is ignored" : "") +
+      ")";
+  const overridden = ETP_EXCEPTION_CATEGORIES.filter(
+    (c) => ETP_EXCEPTION_OVERRIDES[c] !== null
+  );
+  return (
+    `ETP exception list: ${applying}. ` +
+    (overridden.length
+      ? `This run sets ${overridden
+          .map((c) => `${c} ${ETP_EXCEPTION_OVERRIDES[c] ? "on" : "off"}`)
+          .join(" and ")} in every mode; set_etp_mode keeps that, so don't ` +
+        "change the privacy.trackingprotection.allow_list.* prefs.\n"
+      : "These are the category's defaults.\n")
+  );
+}
+
 async function handleSetEtpMode(args2) {
   try {
     const { etp, filter_lists: listNames = [] } = args2 || {};
@@ -538,7 +582,7 @@ async function handleSetEtpMode(args2) {
       {},
       etp,
       filterLists.length ? filterLists.map((list) => list.url).join("|") : null,
-      ETP_DISABLE_EXCEPTIONS
+      ETP_EXCEPTION_OVERRIDES
     );
     // The configuration's prefs are applied now, even if a later step fails.
     etpCurrentMode = [
@@ -594,10 +638,7 @@ async function handleSetEtpMode(args2) {
               .join("\n") +
             "\n"
           : "All of its prefs are at their Standard values.\n") +
-        (ETP_DISABLE_EXCEPTIONS
-          ? "The ETP exception list is disabled (baseline and convenience), " +
-            "as in every mode of this run.\n"
-          : "") +
+        etpDescribeExceptions(result.exceptions) +
         (lists
           ? `Tracker lists updated ${new Date(
               Number(lists.lists.lastUpdate)

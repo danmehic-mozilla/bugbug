@@ -21,12 +21,11 @@ REMOTE_SETTINGS_SERVER = "https://firefox.settings.services.mozilla.com/v1"
 CONTENT_CLASSIFIER_MIRROR_PREF = "privacy.trackingprotection.content.mirror.mode=0"
 
 # The prefs that turn on the two categories of url-classifier-exceptions
-# entries. Turning off baseline also turns off convenience, but set both so the
-# prefs say what they mean.
-ALLOW_LIST_PREFS = (
-    "privacy.trackingprotection.allow_list.baseline.enabled",
-    "privacy.trackingprotection.allow_list.convenience.enabled",
-)
+# entries, by category. Firefox ignores convenience while baseline is off.
+ALLOW_LIST_PREFS = {
+    "baseline": "privacy.trackingprotection.allow_list.baseline.enabled",
+    "convenience": "privacy.trackingprotection.allow_list.convenience.enabled",
+}
 
 
 def resolve_bin(bin_name: str) -> str:
@@ -47,7 +46,8 @@ def build_firefox_devtools_server(
     *,
     headless: bool = True,
     content_blocking_log_file: Path | None = None,
-    disable_exceptions: bool = False,
+    exceptions_baseline: bool | None = None,
+    exceptions_convenience: bool | None = None,
     private: bool = False,
 ) -> McpStdioServerConfig:
     """Build the stdio config for the Firefox DevTools MCP server.
@@ -61,9 +61,11 @@ def build_firefox_devtools_server(
     also appends every log it returns to that JSON file, under the ETP mode
     last set with ``set_etp_mode``.
 
-    If ``disable_exceptions`` is set, Firefox starts with the ETP exception
-    list off, and ``set_etp_mode`` turns it off again after every switch, since
-    switching the category resets it.
+    ``exceptions_baseline`` and ``exceptions_convenience`` turn that category
+    of the ETP exception list on or off; None leaves Firefox's default for the
+    ETP category. Firefox starts with the overrides, and ``set_etp_mode``
+    applies them again after every switch, since switching the category resets
+    them.
 
     If ``private`` is set, every ``set_etp_mode`` closes the private window it
     opened before and opens a fresh one, whose tab becomes the selected page.
@@ -78,9 +80,13 @@ def build_firefox_devtools_server(
         "--pref",
         CONTENT_CLASSIFIER_MIRROR_PREF,
     ]
-    if disable_exceptions:
-        for pref in ALLOW_LIST_PREFS:
-            args += ["--pref", f"{pref}=false"]
+    overrides = {
+        "baseline": exceptions_baseline,
+        "convenience": exceptions_convenience,
+    }
+    for category, value in overrides.items():
+        if value is not None:
+            args += ["--pref", f"{ALLOW_LIST_PREFS[category]}={str(value).lower()}"]
     if headless:
         args.append("--headless")
     if os.environ.get("LOCAL_FIREFOX"):
@@ -89,8 +95,9 @@ def build_firefox_devtools_server(
         args += ["--pref", "network.proxy.type=0"]
 
     env = {"MOZ_REMOTE_ALLOW_SYSTEM_ACCESS": "1"}
-    if disable_exceptions:
-        env["ETP_DISABLE_EXCEPTIONS"] = "1"
+    for category, value in overrides.items():
+        if value is not None:
+            env[f"ETP_EXCEPTIONS_{category.upper()}"] = "1" if value else "0"
     if private:
         env["ETP_PRIVATE"] = "1"
     if content_blocking_log_file is not None:

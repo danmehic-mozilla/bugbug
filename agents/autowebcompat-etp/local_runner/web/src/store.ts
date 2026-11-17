@@ -23,11 +23,12 @@ export const DEFAULT_OPTIONS: RunOptions = {
   effort: null,
   max_turns: null,
   headless: false,
-  mode: "investigate",
   etp: "strict",
   easylist: false,
   easyprivacy: false,
   private: false,
+  exceptions_baseline: null,
+  exceptions_convenience: null,
   native: null,
   build: false,
 };

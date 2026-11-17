@@ -45,6 +45,11 @@ class AgentInputs(BaseSettings):
     easyprivacy: bool = False
     # Test target and baseline in a Private Browsing window.
     private: bool = False
+    # Turn that category of the ETP exception list on or off in every mode;
+    # unset keeps the ETP level's default (Strict: baseline only; Standard and
+    # Off: both). `retest` mode means baseline off.
+    exceptions_baseline: bool | None = None
+    exceptions_convenience: bool | None = None
 
     model_config = SettingsConfigDict(extra="ignore")
 
@@ -91,6 +96,8 @@ async def main(ctx: HackbotContext) -> AutowebcompatResult:
         etp=inputs.etp,
         filter_lists=tuple(name for name in FILTER_LISTS if getattr(inputs, name)),
         private=inputs.private,
+        exceptions_baseline=inputs.exceptions_baseline,
+        exceptions_convenience=inputs.exceptions_convenience,
     )
     end_time = datetime.now()
 

@@ -10,7 +10,10 @@ export type RunStatus =
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
-/** `retest` reruns an old bug with Firefox's ETP exceptions turned off. */
+/**
+ * `retest` reruns an old bug with Firefox's ETP exceptions turned off; runs
+ * now set `exceptions_baseline: false` instead.
+ */
 export type Mode = "investigate" | "retest";
 
 /** The ETP category of the configuration the agent investigates. */
@@ -23,11 +26,13 @@ export interface RunOptions {
   effort: Effort | null;
   max_turns: number | null;
   headless: boolean;
-  mode: Mode;
   etp: EtpLevel;
   easylist: boolean;
   easyprivacy: boolean;
   private: boolean;
+  /** Whether that ETP exception category applies; null: the level's default. */
+  exceptions_baseline: boolean | null;
+  exceptions_convenience: boolean | null;
   /** null: natively when the server has a local Firefox. */
   native: boolean | null;
   build: boolean;
@@ -39,9 +44,13 @@ export interface TargetConfig {
   easylist: boolean;
   easyprivacy: boolean;
   private: boolean;
+  exceptions_baseline: boolean | null;
+  exceptions_convenience: boolean | null;
 }
 
 export interface RunParams extends Partial<RunOptions> {
+  /** Set by older runs; `retest` means the baseline exceptions were off. */
+  mode?: Mode;
   bug_id?: number | null;
   bug_data?: string | null;
 }
@@ -126,6 +135,10 @@ export interface EtpResult {
   etp?: EtpLevel;
   filter_lists?: FilterList[];
   private?: boolean;
+  mode?: Mode;
+  /** Whether each ETP exception category applied (null in older runs). */
+  exceptions_baseline?: boolean | null;
+  exceptions_convenience?: boolean | null;
   filter_list_versions?: Partial<Record<FilterList, string>> | null;
   broken_without_lists?: boolean | null;
   culprit_prefs: string[];
@@ -199,6 +212,9 @@ export interface CompareRow {
   has_result: boolean;
   etp: EtpLevel | null;
   private: boolean | null;
+  mode: Mode | null;
+  exceptions_baseline: boolean | null;
+  exceptions_convenience: boolean | null;
   filter_lists: FilterList[] | null;
   filter_list_versions: Partial<Record<FilterList, string>> | null;
   failure_reason: string | null;

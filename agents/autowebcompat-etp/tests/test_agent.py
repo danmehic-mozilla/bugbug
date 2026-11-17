@@ -1,6 +1,7 @@
 import json
 from unittest import mock
 
+import pytest
 import requests
 from autowebcompat_tools.inputs import BugDataInput, BugIdInput
 from autowebcompat_tools.task import RunTracker, TaskConfig
@@ -162,28 +163,40 @@ def test_firefox_devtools_server_passes_filter_list_base_url(tmp_path, monkeypat
     assert server["env"]["ETP_FILTER_LIST_BASE_URL"] == base_url
 
 
-def test_firefox_devtools_server_disables_exceptions(tmp_path, monkeypatch):
+def test_firefox_devtools_server_overrides_exceptions(tmp_path, monkeypatch):
     monkeypatch.setattr(mcp_servers, "resolve_bin", lambda name: name)
-    prefs = [f"{pref}=false" for pref in mcp_servers.ALLOW_LIST_PREFS]
+    baseline, convenience = mcp_servers.ALLOW_LIST_PREFS.values()
 
     server = mcp_servers.build_firefox_devtools_server(tmp_path)
-    assert not set(prefs) & set(server["args"])
-    assert "ETP_DISABLE_EXCEPTIONS" not in server["env"]
+    assert not any("allow_list" in arg for arg in server["args"])
+    assert not any(name.startswith("ETP_EXCEPTIONS_") for name in server["env"])
 
     server = mcp_servers.build_firefox_devtools_server(
-        tmp_path, disable_exceptions=True
+        tmp_path, exceptions_baseline=False, exceptions_convenience=False
     )
-    assert set(prefs) <= set(server["args"])
-    assert server["env"]["ETP_DISABLE_EXCEPTIONS"] == "1"
+    assert {f"{baseline}=false", f"{convenience}=false"} <= set(server["args"])
+    assert server["env"]["ETP_EXCEPTIONS_BASELINE"] == "0"
+    assert server["env"]["ETP_EXCEPTIONS_CONVENIENCE"] == "0"
+
+    # Only the overridden category is set.
+    server = mcp_servers.build_firefox_devtools_server(
+        tmp_path, exceptions_convenience=True
+    )
+    assert f"{convenience}=true" in server["args"]
+    assert not any(arg.startswith(baseline) for arg in server["args"])
+    assert server["env"]["ETP_EXCEPTIONS_CONVENIENCE"] == "1"
+    assert "ETP_EXCEPTIONS_BASELINE" not in server["env"]
 
 
-def test_retest_mode_disables_exceptions_and_says_so(tmp_path, monkeypatch):
+@pytest.fixture
+def investigation(tmp_path, monkeypatch):
+    """Builds an EtpInvestigation; `build.call_args` has its DevTools server."""
     build = mock.Mock(return_value={})
     monkeypatch.setattr(agent, "build_firefox_devtools_server", build)
     monkeypatch.setattr(agent, "build_exceptions_server", mock.Mock())
     monkeypatch.setattr(agent, "build_tracker_lists_server", mock.Mock())
 
-    def investigation(**kwargs):
+    def make(**kwargs):
         return agent.EtpInvestigation(
             mock.MagicMock(),
             mock.Mock(),
@@ -194,11 +207,93 @@ def test_retest_mode_disables_exceptions_and_says_so(tmp_path, monkeypatch):
             **kwargs,
         )
 
-    assert agent.RETEST_NOTE not in investigation().user_prompt()
-    assert build.call_args.kwargs["disable_exceptions"] is False
+    make.build = build
+    return make
 
-    assert agent.RETEST_NOTE in investigation(mode="retest").user_prompt()
-    assert build.call_args.kwargs["disable_exceptions"] is True
+
+def overrides(build):
+    kwargs = build.call_args.kwargs
+    return kwargs["exceptions_baseline"], kwargs["exceptions_convenience"]
+
+
+@pytest.mark.parametrize("etp", ["strict", "standard"])
+def test_default_exceptions_add_no_note(investigation, etp):
+    prompt = investigation(etp=etp).user_prompt()
+    assert agent.RETEST_NOTE not in prompt
+    assert "allow_list" not in prompt
+    assert overrides(investigation.build) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"mode": "retest"},
+        {"exceptions_baseline": False},
+        # Convenience is moot without baseline.
+        {"exceptions_baseline": False, "exceptions_convenience": True},
+        {"mode": "retest", "exceptions_baseline": True},
+    ],
+)
+def test_baseline_off_disables_exceptions_and_says_so(investigation, kwargs):
+    task = investigation(**kwargs)
+    assert agent.RETEST_NOTE in task.user_prompt()
+    assert overrides(investigation.build) == (False, False)
+    assert task.exceptions == (False, False)
+
+
+@pytest.mark.parametrize(
+    ("etp", "convenience", "exceptions", "applying", "default"),
+    [
+        (
+            "strict",
+            True,
+            (True, True),
+            "both `baseline` and `convenience`",
+            "`baseline` only",
+        ),
+        ("standard", False, (True, False), "only `baseline`", "both"),
+    ],
+)
+def test_convenience_override_says_what_applies(
+    investigation, etp, convenience, exceptions, applying, default
+):
+    task = investigation(etp=etp, exceptions_convenience=convenience)
+    prompt = task.user_prompt()
+    assert agent.RETEST_NOTE not in prompt
+    assert applying in prompt
+    assert f"defaults to {default})" in prompt
+    assert "`set_etp_mode` keeps it that way" in prompt
+    assert overrides(investigation.build) == (None, convenience)
+    assert task.exceptions == exceptions
+
+
+@pytest.mark.parametrize(
+    ("etp", "convenience"), [("strict", False), ("standard", True), ("off", True)]
+)
+def test_override_matching_the_default_is_dropped(investigation, etp, convenience):
+    task = investigation(
+        etp=etp, exceptions_baseline=True, exceptions_convenience=convenience
+    )
+    assert "allow_list" not in task.user_prompt()
+    assert overrides(investigation.build) == (None, None)
+    assert task.exceptions == (True, etp != "strict")
+
+
+def test_agent_inputs_read_exception_overrides(monkeypatch):
+    from hackbot_agents.autowebcompat_etp.__main__ import AgentInputs
+
+    monkeypatch.setenv("BROKER_URL", "http://broker")
+    inputs = AgentInputs()
+    assert inputs.exceptions_baseline is None
+    assert inputs.exceptions_convenience is None
+
+    monkeypatch.setenv("EXCEPTIONS_BASELINE", "true")
+    monkeypatch.setenv("EXCEPTIONS_CONVENIENCE", "false")
+    monkeypatch.setenv("MODE", "retest")
+    inputs = AgentInputs()
+    assert inputs.exceptions_baseline is True
+    assert inputs.exceptions_convenience is False
+    assert inputs.mode == "retest"
 
 
 def test_final_result_keeps_counts_without_paths(tmp_path):
@@ -450,3 +545,38 @@ def test_final_result_skips_list_check(tmp_path):
     )
     assert final.broken_without_lists is True
     assert final.private is True
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({}, (True, False)),
+        ({"exceptions_convenience": True}, (True, True)),
+        ({"mode": "retest"}, (False, False)),
+    ],
+)
+def test_run_records_effective_exceptions(tmp_path, monkeypatch, kwargs, expected):
+    import asyncio
+
+    monkeypatch.setattr(agent, "Environment", mock.MagicMock())
+    monkeypatch.setattr(agent, "firefox_binary", lambda: tmp_path)
+    monkeypatch.setattr(agent, "build_firefox_devtools_server", mock.Mock())
+    monkeypatch.setattr(agent, "build_exceptions_server", mock.Mock())
+    monkeypatch.setattr(agent, "build_tracker_lists_server", mock.Mock())
+    monkeypatch.setattr(agent, "find_existing_exceptions", lambda records: [])
+    monkeypatch.setattr(
+        agent.EtpInvestigation, "run", mock.AsyncMock(return_value=make_result(GLOBAL))
+    )
+
+    final = asyncio.run(
+        agent.run_autowebcompat_etp(
+            TaskConfig(headless=True),
+            RunTracker(),
+            BugIdInput(bug_id=1),
+            {},
+            mock.Mock(),
+            etp="strict",
+            **kwargs,
+        )
+    )
+    assert (final.exceptions_baseline, final.exceptions_convenience) == expected
