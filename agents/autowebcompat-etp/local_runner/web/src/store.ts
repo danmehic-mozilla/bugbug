@@ -9,6 +9,8 @@ import type {
   Review,
   RunInfo,
   RunOptions,
+  CompareRow,
+  TargetConfig,
   BugQuery,
   ListedBug,
   WhoAmI,
@@ -20,6 +22,11 @@ export const DEFAULT_OPTIONS: RunOptions = {
   max_turns: null,
   headless: false,
   mode: "investigate",
+  etp: "strict",
+  easylist: false,
+  easyprivacy: false,
+  private: false,
+  native: null,
   build: false,
 };
 
@@ -60,7 +67,15 @@ export interface TriageState {
   bugs: ListedBug[];
   selected: number[];
   options: RunOptions;
+  configs: TargetConfig[];
   busy: boolean;
+  error: string | null;
+}
+
+/** The compare view of one bug's runs; `rows` is null while loading. */
+export interface CompareState {
+  bugId: number;
+  rows: CompareRow[] | null;
   error: string | null;
 }
 
@@ -68,6 +83,7 @@ export interface StartState {
   bugId: string;
   bugData: string;
   options: RunOptions;
+  configs: TargetConfig[];
   busy: boolean;
   error: string | null;
 }
@@ -80,10 +96,12 @@ export const store = proxy({
     bugId: "",
     bugData: "",
     options: { ...DEFAULT_OPTIONS },
+    configs: [],
     busy: false,
     error: null,
   } as StartState,
   run: null as RunState | null,
+  compare: null as CompareState | null,
   /** The queue-from-Bugzilla dialog, while open. */
   triage: null as TriageState | null,
   /** Wall clock in ms, ticking while a run is in progress. */

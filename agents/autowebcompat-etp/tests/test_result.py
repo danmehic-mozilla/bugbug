@@ -2,6 +2,7 @@ import pytest
 from hackbot_agents.autowebcompat_etp.result import (
     PNG_SIGNATURE,
     EtpInvestigationResult,
+    EtpListsTargetResult,
     ProposedException,
     ProposedShim,
 )
@@ -16,14 +17,13 @@ PROPOSAL = {
 }
 
 
-def make_result(**overrides):
+def make_result(result_cls=EtpInvestigationResult, **overrides):
     fields = {
         "summary": "The LinkedIn button is missing in Strict mode.",
         "failure_reason": None,
-        "broken_in_standard": False,
-        "broken_in_strict": True,
-        "broken_with_easyprivacy": False,
-        "broken_with_easylist": True,
+        "broken_in_baseline": False,
+        "broken_in_target": True,
+        "broken_without_lists": None,
         "culprit_prefs": ["privacy.trackingprotection.socialtracking.enabled"],
         "blocked_resources": ["https://platform.linkedin.com (socialtracking)"],
         "proposed_exceptions": [PROPOSAL],
@@ -32,7 +32,7 @@ def make_result(**overrides):
         "priority": "P3",
         "steps": "1. Set browser.contentblocking.category to strict.",
     }
-    return EtpInvestigationResult.model_validate(fields | overrides)
+    return result_cls.model_validate(fields | overrides)
 
 
 @pytest.mark.parametrize(
@@ -124,31 +124,6 @@ def test_anti_adblock_needs_verified_exceptions():
         make_result(failure_reason="anti_adblock", exception_verified=False)
 
 
-def test_filter_lists_only_when_strict_is_broken():
-    make_result(broken_with_easyprivacy=True)
-    make_result(
-        failure_reason="not_reproducible",
-        broken_in_strict=False,
-        broken_with_easyprivacy=None,
-        broken_with_easylist=None,
-        proposed_exceptions=[],
-    )
-    with pytest.raises(ValidationError, match="broken_with_easyprivacy"):
-        make_result(
-            failure_reason="not_reproducible",
-            broken_in_strict=False,
-            broken_with_easylist=None,
-            proposed_exceptions=[],
-        )
-    with pytest.raises(ValidationError, match="broken_with_easylist"):
-        make_result(
-            failure_reason="not_reproducible",
-            broken_in_strict=False,
-            broken_with_easyprivacy=None,
-            proposed_exceptions=[],
-        )
-
-
 def test_shim_unblocks_match_kind():
     with pytest.raises(ValidationError, match="must not be empty"):
         ProposedShim.model_validate(SHIM | {"unblocksOnOptIn": []})
@@ -167,28 +142,78 @@ def test_shim_patterns_are_validated():
 def test_screenshots_must_be_pngs(tmp_path):
     png = tmp_path / "strict.png"
     png.write_bytes(PNG_SIGNATURE + b"rest")
-    assert make_result(screenshot_strict=png).screenshot_strict == png
+    assert make_result(screenshot_target=png).screenshot_target == png
 
     empty = tmp_path / "empty.png"
     empty.touch()
     with pytest.raises(ValidationError, match="not a valid PNG"):
-        make_result(screenshot_strict=empty)
+        make_result(screenshot_target=empty)
     with pytest.raises(ValidationError, match="Cannot read"):
         make_result(screenshot_fixed=tmp_path / "missing.png")
     with pytest.raises(ValidationError, match="not a valid PNG"):
-        make_result(screenshot_easyprivacy=empty)
-    with pytest.raises(ValidationError, match="not a valid PNG"):
-        make_result(screenshot_easylist=empty)
+        make_result(screenshot_baseline=empty)
 
 
 def test_blocked_trackers_only_for_taken_screenshots(tmp_path):
     png = tmp_path / "strict.png"
     png.write_bytes(PNG_SIGNATURE)
-    result = make_result(screenshot_strict=png, blocked_trackers={"strict": 7})
-    assert result.blocked_trackers.strict == 7
-    assert make_result().blocked_trackers.strict is None
+    result = make_result(screenshot_target=png, blocked_trackers={"target": 7})
+    assert result.blocked_trackers.target == 7
+    assert make_result().blocked_trackers.target is None
 
     with pytest.raises(ValidationError, match="screenshot_fixed is null"):
         make_result(blocked_trackers={"fixed": 0})
     with pytest.raises(ValidationError, match="greater than or equal to 0"):
-        make_result(screenshot_strict=png, blocked_trackers={"strict": -1})
+        make_result(screenshot_target=png, blocked_trackers={"target": -1})
+
+
+def test_broken_without_lists_only_with_lists():
+    with pytest.raises(ValidationError, match="must be null unless"):
+        make_result(broken_without_lists=True)
+    # A target with lists that works needs no retest without them.
+    make_result(
+        EtpListsTargetResult,
+        failure_reason="not_reproducible",
+        broken_in_target=False,
+        proposed_exceptions=[],
+        exception_verified=False,
+    )
+    with pytest.raises(ValidationError, match="must be null unless"):
+        make_result(
+            EtpListsTargetResult,
+            failure_reason="not_reproducible",
+            broken_in_target=False,
+            broken_without_lists=False,
+            proposed_exceptions=[],
+            exception_verified=False,
+        )
+
+
+def test_broken_target_with_lists_needs_retest_without_them():
+    with pytest.raises(ValidationError, match="no filter_lists"):
+        make_result(EtpListsTargetResult)
+    result = make_result(EtpListsTargetResult, broken_without_lists=True)
+    assert result.broken_without_lists is True
+
+
+def test_breakage_from_lists_alone_is_not_fixable_by_exception():
+    with pytest.raises(ValidationError, match="not_fixable_by_exception"):
+        make_result(EtpListsTargetResult, broken_without_lists=False)
+    result = make_result(
+        EtpListsTargetResult,
+        broken_without_lists=False,
+        failure_reason="not_fixable_by_exception",
+        proposed_exceptions=[],
+        exception_verified=False,
+    )
+    assert result.failure_reason == "not_fixable_by_exception"
+
+
+def test_broken_without_lists_not_needed_when_broken_in_baseline():
+    make_result(
+        EtpListsTargetResult,
+        failure_reason="broken_in_baseline",
+        broken_in_baseline=True,
+        proposed_exceptions=[],
+        exception_verified=False,
+    )

@@ -40,35 +40,26 @@ async function etpRunChrome(script, { isAsync = false } = {}, ...scriptArgs) {
   }
 }
 
-// Filter lists the content classifier can block with instead of the tracker
-// lists. `probe` is a URL the list blocks and the other lists don't, so a match
-// shows that this list in particular is loaded.
+// Filter lists the content classifier can block with, next to or without the
+// tracker lists. `probe` is a URL the list blocks and the other lists don't, so
+// a match shows that this list in particular is loaded.
 const ETP_FILTER_LISTS = {
-  easyprivacy: {
-    name: "EasyPrivacy",
-    url: "https://easylist.to/easylist/easyprivacy.txt",
-    probe: "https://www.google-analytics.com/analytics.js",
-  },
   easylist: {
     name: "EasyList",
     url: "https://easylist.to/easylist/easylist.txt",
     probe: "https://ib.adnxs.com/ut/v3/prebid",
   },
+  easyprivacy: {
+    name: "EasyPrivacy",
+    url: "https://easylist.to/easylist/easyprivacy.txt",
+    probe: "https://www.google-analytics.com/analytics.js",
+  },
 };
 
-// The modes that block with filter lists, with the lists each one uses.
-const ETP_FILTER_LIST_MODES = {
-  "strict/easyprivacy": [ETP_FILTER_LISTS.easyprivacy],
-  "strict/easylist+easyprivacy": [
-    ETP_FILTER_LISTS.easylist,
-    ETP_FILTER_LISTS.easyprivacy,
-  ],
-};
+const ETP_LEVELS = ["off", "standard", "strict"];
 
-const ETP_MODES = ["standard", "strict", ...Object.keys(ETP_FILTER_LIST_MODES)];
-
-// The mode last set with set_etp_mode, which get_content_blocking_log records
-// its logs under. Firefox starts in Standard.
+// The configuration last set with set_etp_mode (e.g. "strict+easylist"), which
+// get_content_blocking_log records its logs under. Firefox starts in Standard.
 let etpCurrentMode = "standard";
 
 // Set by the harness in retest mode: keep the ETP exception list (both its
@@ -76,11 +67,155 @@ let etpCurrentMode = "standard";
 // bare lists. Skip-URL prefs still apply; they aren't part of either category.
 const ETP_DISABLE_EXCEPTIONS = process.env.ETP_DISABLE_EXCEPTIONS === "1";
 
+// Set by the harness for a Private Browsing run: every set_etp_mode closes the
+// private window it opened before and opens a fresh one, whose tab becomes the
+// selected page, so each configuration is tested in a new private session.
+const ETP_PRIVATE = process.env.ETP_PRIVATE === "1";
+
+// The `! Version:` header of each filter list set_etp_mode loaded, by list key.
+const etpFilterListVersions = {};
+
+// Reads a filter list's `! Version:` header, which sits in its first lines:
+// stops reading once it is found, or after 64 KB. Null if it isn't there.
+async function etpFetchListVersion(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30e3);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (text.length < 65536) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      text += decoder.decode(value, { stream: true });
+      const match = text.match(/^! Version: *(\S+)/m);
+      if (match) {
+        return match[1];
+      }
+    }
+    return null;
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}
+
+// Closes the private windows (and so ends the private session, dropping its
+// cookies and site data), then opens a new private window. Calls back once its
+// first tab exists, with whether the old session was seen to end.
+const ETP_OPEN_PRIVATE_WINDOW_SCRIPT = `
+  const done = arguments[arguments.length - 1];
+  const { BrowserWindowTracker } = ChromeUtils.importESModule(
+    "resource:///modules/BrowserWindowTracker.sys.mjs"
+  );
+  const { PrivateBrowsingUtils } = ChromeUtils.importESModule(
+    "resource://gre/modules/PrivateBrowsingUtils.sys.mjs"
+  );
+  const old = [...Services.wm.getEnumerator("navigator:browser")].filter((w) =>
+    PrivateBrowsingUtils.isWindowPrivate(w)
+  );
+  const exited = old.length
+    ? new Promise((resolve) => {
+        const topic = "last-pb-context-exited";
+        const observer = () => {
+          Services.obs.removeObserver(observer, topic);
+          resolve(true);
+        };
+        Services.obs.addObserver(observer, topic);
+        setTimeout(() => resolve(false), 10000);
+        for (const w of old) {
+          w.close();
+        }
+      })
+    : Promise.resolve(true);
+  exited
+    .then((sessionEnded) =>
+      BrowserWindowTracker.promiseOpenWindow({ private: true }).then(() => ({
+        sessionEnded,
+      }))
+    )
+    .then(done, (e) => done({ error: String(e) }));
+`;
+
+// Opens a fresh private window (see ETP_OPEN_PRIVATE_WINDOW_SCRIPT) and makes
+// its tab the selected page, the way select_page does, so the page tools act
+// on it. Returns whether the previous private session ended.
+async function etpOpenPrivateWindow() {
+  const { getFirefox: getFirefox2 } = await Promise.resolve().then(
+    () => (init_src(), src_exports)
+  );
+  const firefox3 = await getFirefox2();
+  const driver = firefox3.getDriver();
+  const before = new Set(await driver.getAllWindowHandles());
+  const result = await etpRunChrome(ETP_OPEN_PRIVATE_WINDOW_SCRIPT, {
+    isAsync: true,
+  });
+  if (result.error) {
+    throw new Error(`Opening a private window failed: ${result.error}`);
+  }
+  const deadline = Date.now() + 10e3;
+  for (;;) {
+    const handles = await driver.getAllWindowHandles();
+    const added = handles.filter((handle) => !before.has(handle));
+    if (added.length) {
+      await driver.switchTo().window(added[0]);
+      firefox3.setCurrentContextId(added[0]);
+      await firefox3.refreshTabs();
+      break;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("The private window opened, but its tab never appeared");
+    }
+    await new Promise((resolve2) => setTimeout(resolve2, 250));
+  }
+  const isPrivate = await etpRunChrome(
+    ETP_SELECTED_BROWSER_PREAMBLE + "return isPrivate;",
+    {},
+    firefox3.getCurrentContextId()
+  );
+  if (!isPrivate) {
+    throw new Error("The selected page is not in a private window");
+  }
+  return result;
+}
+
+// Chrome-script preamble that finds the <browser> of the selected page (the
+// script's first argument is its context ID) and whether it is private.
+const ETP_SELECTED_BROWSER_PREAMBLE = `
+  const { NavigableManager } = ChromeUtils.importESModule(
+    "chrome://remote/content/shared/NavigableManager.sys.mjs"
+  );
+  const browser = NavigableManager.getBrowserById(arguments[0]);
+  if (!browser) {
+    throw new Error("No tab for the selected page " + arguments[0]);
+  }
+  const isPrivate = browser.browsingContext.usePrivateBrowsing;
+`;
+
 const ETP_SET_MODE_SCRIPT = `
-  // listUrls is the test_list_urls value for a filter-list mode, else null.
-  const [mode, listUrls, disableExceptions] = arguments;
+  // listUrls is the test_list_urls value when filter lists are selected, else
+  // null.
+  const [etp, listUrls, disableExceptions] = arguments;
   const category = "browser.contentblocking.category";
   const CC = "privacy.trackingprotection.content.";
+  // ETP off: every tracker feature off and cookies unrestricted.
+  const OFF_PREFS = {
+    "privacy.trackingprotection.enabled": false,
+    "privacy.trackingprotection.pbmode.enabled": false,
+    "privacy.trackingprotection.socialtracking.enabled": false,
+    "privacy.trackingprotection.cryptomining.enabled": false,
+    "privacy.trackingprotection.fingerprinting.enabled": false,
+    "privacy.trackingprotection.emailtracking.enabled": false,
+    "privacy.trackingprotection.emailtracking.pbmode.enabled": false,
+    "network.cookie.cookieBehavior": 0,
+    "network.cookie.cookieBehavior.pbmode": 0,
+  };
   // The service ignores pref changes until it exists. Getting it creates it,
   // but fails while it is disabled, after creating it.
   try {
@@ -88,9 +223,15 @@ const ETP_SET_MODE_SCRIPT = `
       Ci.nsIContentClassifierService
     );
   } catch {}
-  // Clearing protection.enabled drops the classifier's engines, and setting
+  // The harness starts Firefox with the content classifier's pref mirror off,
+  // so the classic URL classifier blocks the category's tracker lists and
+  // honors the skip-URL prefs. The content classifier only runs the filter
+  // lists. Clearing protection.enabled drops its engines, and setting
   // test_list_urls afterwards is always a change, which is what makes the
-  // classifier download the list (enabling it alone does not).
+  // classifier download the lists (enabling it alone does not).
+  const URLCLASSIFIER_OFF =
+    "privacy.trackingprotection.urlclassifier.disable_for_channel_classifier";
+  Services.prefs.clearUserPref(URLCLASSIFIER_OFF);
   for (const p of [
     "protection.enabled",
     "protection.engines",
@@ -99,21 +240,42 @@ const ETP_SET_MODE_SCRIPT = `
   ]) {
     Services.prefs.clearUserPref(CC + p);
   }
+  // The Remote Agent's recommended prefs turn tracker blocking in private
+  // windows off on the default branch, which Standard falls back to: restore
+  // Firefox's own default, so Standard blocks trackers in private windows.
+  Services.prefs
+    .getDefaultBranch("")
+    .setBoolPref("privacy.trackingprotection.pbmode.enabled", true);
+  // ContentBlockingPrefs observes the category pref and synchronously applies
+  // the category's prefs, but only on a change: go through another category
+  // first, so re-selecting the current one still reapplies them.
+  Services.prefs.setStringPref(
+    category,
+    etp === "standard" ? "strict" : "standard"
+  );
+  if (etp === "off") {
+    for (const [p, value] of Object.entries(OFF_PREFS)) {
+      if (typeof value === "boolean") {
+        Services.prefs.setBoolPref(p, value);
+      } else {
+        Services.prefs.setIntPref(p, value);
+      }
+    }
+    Services.prefs.setStringPref(category, "custom");
+  } else {
+    Services.prefs.setStringPref(category, etp);
+  }
   if (listUrls !== null) {
-    // With the mirror on, switching the category below would overwrite the
-    // engines prefs with the tracker-list engines.
+    // An enabled content classifier makes Nightly skip the URL classifier for
+    // every channel; keep it running so the filter lists block next to the
+    // category's tracker lists instead of in place of them.
+    Services.prefs.setBoolPref(URLCLASSIFIER_OFF, false);
     Services.prefs.setIntPref(CC + "mirror.mode", 0);
     Services.prefs.setStringPref(CC + "protection.engines", "test_block");
     Services.prefs.setStringPref(CC + "protection.engines.pbmode", "test_block");
     Services.prefs.setBoolPref(CC + "protection.enabled", true);
     Services.prefs.setStringPref(CC + "protection.test_list_urls", listUrls);
   }
-  // ContentBlockingPrefs observes the category pref and synchronously applies
-  // the category's prefs.
-  Services.prefs.setStringPref(
-    category,
-    listUrls !== null ? "strict" : mode
-  );
   // Switching the category resets these (Strict turns baseline on, Standard
   // clears both), so turn them off again after it. ContentBlockingPrefs
   // ignores them when matching the category, which stays as set above.
@@ -140,14 +302,31 @@ const ETP_SET_MODE_SCRIPT = `
   };
   const defaults = Services.prefs.getDefaultBranch("");
   const changed = {};
-  for (const p of Object.keys(ContentBlockingPrefs.CATEGORY_PREFS.strict)) {
+  for (const p of new Set([
+    ...Object.keys(ContentBlockingPrefs.CATEGORY_PREFS.strict),
+    ...Object.keys(OFF_PREFS),
+  ])) {
     const value = read(Services.prefs, p);
     const standard = read(defaults, p);
     if (value !== standard) {
       changed[p] = { value, standard };
     }
   }
-  return { category: Services.prefs.getStringPref(category), changed };
+  return {
+    category: Services.prefs.getStringPref(category),
+    changed,
+    engines: Services.prefs.getStringPref(CC + "protection.engines", ""),
+    enginesPbmode: Services.prefs.getStringPref(
+      CC + "protection.engines.pbmode",
+      ""
+    ),
+    mirrorMode: Services.prefs.getIntPref(CC + "mirror.mode", -1),
+    // The URL classifier is only skipped while the content classifier is on.
+    urlClassifierOn: !(
+      Services.prefs.getBoolPref(URLCLASSIFIER_OFF, false) &&
+      Services.prefs.getBoolPref(CC + "protection.enabled", false)
+    ),
+  };
 `;
 
 // Clears cookies, site data and caches, so the next load is a first visit like
@@ -322,28 +501,63 @@ async function etpWaitForFilterLists(lists) {
 
 async function handleSetEtpMode(args2) {
   try {
-    const { mode } = args2 || {};
-    if (!ETP_MODES.includes(mode)) {
+    const { etp, filter_lists: listNames = [] } = args2 || {};
+    if (!ETP_LEVELS.includes(etp)) {
       throw new Error(
-        `mode must be one of ${ETP_MODES.map((m) => `"${m}"`).join(", ")}`
+        `etp must be one of ${ETP_LEVELS.map((m) => `"${m}"`).join(", ")}`
       );
     }
-    const filterLists = ETP_FILTER_LIST_MODES[mode] ?? null;
-    // Without the lists, Strict mode blocks nothing: make sure they are there
-    // before switching, and fail instead of handing back a Strict mode that
-    // silently doesn't block.
-    const lists = mode === "strict" ? await etpEnsureProtectionLists() : null;
+    const unknown = listNames.filter((name) => !(name in ETP_FILTER_LISTS));
+    if (unknown.length) {
+      throw new Error(
+        `unknown filter list(s) ${unknown.join(", ")}; use ${Object.keys(
+          ETP_FILTER_LISTS
+        ).join(", ")}`
+      );
+    }
+    const filterLists = Object.keys(ETP_FILTER_LISTS)
+      .filter((name) => listNames.includes(name))
+      .map((name) => ETP_FILTER_LISTS[name]);
+    // Without the tracker lists, Standard and Strict block nothing: make sure
+    // they are there before switching, and fail instead of handing back a mode
+    // that silently doesn't block.
+    const lists = etp !== "off" ? await etpEnsureProtectionLists() : null;
     const result = await etpRunChrome(
       ETP_SET_MODE_SCRIPT,
       {},
-      mode,
-      filterLists && filterLists.map((list) => list.url).join("|"),
+      etp,
+      filterLists.length ? filterLists.map((list) => list.url).join("|") : null,
       ETP_DISABLE_EXCEPTIONS
     );
-    // The mode's prefs are applied now, even if a later step fails.
-    etpCurrentMode = mode;
-    if (filterLists) {
+    // The configuration's prefs are applied now, even if a later step fails.
+    etpCurrentMode = [
+      etp,
+      ...Object.keys(ETP_FILTER_LISTS).filter((n) => listNames.includes(n)),
+    ].join("+");
+    // Read the list versions while Firefox downloads the lists; a failure only
+    // leaves the version unknown.
+    const listKeys = Object.keys(ETP_FILTER_LISTS).filter((n) =>
+      listNames.includes(n)
+    );
+    const versions = Promise.all(
+      listKeys.map((key) =>
+        etpFetchListVersion(ETP_FILTER_LISTS[key].url).then(
+          (version) => ({ key, version }),
+          (e) => ({ key, version: null, error: String(e?.message ?? e) })
+        )
+      )
+    );
+    if (filterLists.length) {
       await etpWaitForFilterLists(filterLists);
+    }
+    const listVersions = await versions;
+    for (const { key, version } of listVersions) {
+      etpFilterListVersions[key] = version;
+    }
+    if (listVersions.length) {
+      await etpUpdateContentBlockingLogFile((logs) => {
+        logs.filterListVersions = { ...etpFilterListVersions };
+      });
     }
     const { failedFlags } = await etpRunChrome(ETP_CLEAR_DATA_SCRIPT, {
       isAsync: true,
@@ -353,6 +567,7 @@ async function handleSetEtpMode(args2) {
         `Clearing cookies, site data and caches failed (flags ${failedFlags})`
       );
     }
+    const privateWindow = ETP_PRIVATE ? await etpOpenPrivateWindow() : null;
     const changed = Object.entries(result.changed);
     return successResponse(
       `ETP category is now ${result.category}. ` +
@@ -379,14 +594,34 @@ async function handleSetEtpMode(args2) {
               lists.exceptionList.exceptions
             } ETP exception records.\n`
           : "") +
-        (filterLists
-          ? `Blocking with ${filterLists
-              .map((list) => `the ${list.name} list (${list.url})`)
-              .join(" and ")} in the content classifier instead of the ` +
-            "tracker lists; they are loaded and blocking. Blocked resources show as STATE_BLOCKED_TRACKING_CONTENT " +
-            "(or STATE_REPLACED_TRACKING_CONTENT when shimmed).\n"
+        (filterLists.length
+          ? `Also blocking with ${filterLists
+              .map((list, i) => {
+                const { version, error } = listVersions[i];
+                return (
+                  `the ${list.name} list (${list.url}, version ` +
+                  `${version ?? `unknown: ${error ?? "no ! Version: header"}`})`
+                );
+              })
+              .join(" and ")} in the content classifier, next to whatever ` +
+            "the category blocks; they are loaded and blocking. Resources they block show as STATE_BLOCKED_TRACKING_CONTENT " +
+            "(or STATE_REPLACED_TRACKING_CONTENT when shimmed), and the skip-URL prefs don't lift them.\n"
           : "") +
+        `Content classifier engines: ${result.engines || "(none)"} (Private ` +
+        `Browsing: ${result.enginesPbmode || "(none)"}, mirror mode ` +
+        `${result.mirrorMode}); URL classifier ${
+          result.urlClassifierOn ? "on" : "skipped"
+        }.\n` +
         "Cleared cookies, site data and caches, so the next load is a first visit.\n" +
+        (privateWindow
+          ? "Closed the previous private window" +
+            (privateWindow.sessionEnded
+              ? ""
+              : " (its session was not seen to end)") +
+            " and opened a fresh one; its tab is now the selected page. Test " +
+            "in it: load the URL there with navigate_page, and don't select " +
+            "another page.\n"
+          : "") +
         "Reload the page (navigate_page) for the change to apply to it."
     );
   } catch (error2) {
@@ -396,15 +631,16 @@ async function handleSetEtpMode(args2) {
   }
 }
 
-// Decodes the selected tab's content blocking log; the flag names come from
-// nsIWebProgressListener so they stay correct across Firefox versions.
+// Decodes the selected page's content blocking log (its tab can be in a
+// private window); the flag names come from nsIWebProgressListener so they stay
+// correct across Firefox versions.
 const ETP_CONTENT_BLOCKING_LOG_SCRIPT = `
   const done = arguments[arguments.length - 1];
+  ${ETP_SELECTED_BROWSER_PREAMBLE}
   const L = Ci.nsIWebProgressListener;
   const names = Object.keys(L).filter((k) =>
     /^STATE_.*(BLOCKED|LOADED|REPLACED|ALLOWED|COOKIES|PARTITIONED)/.test(k)
   );
-  const browser = gBrowser.selectedBrowser;
   Promise.resolve(browser.getContentBlockingLog())
     .then((raw) => {
       const log = JSON.parse(raw || "{}");
@@ -416,7 +652,7 @@ const ETP_CONTENT_BLOCKING_LOG_SCRIPT = `
           count,
         }));
       }
-      done({ url: browser.currentURI.spec, origins });
+      done({ url: browser.currentURI.spec, private: isPrivate, origins });
     })
     .catch((e) => done({ error: String(e) }));
 `;
@@ -437,11 +673,14 @@ function etpBlockedTrackers(origins) {
   );
 }
 
-// Appends a log to the JSON file named by ETP_CONTENT_BLOCKING_LOG_FILE, under
-// the mode last set with set_etp_mode: { [mode]: [{ time, url, blockedTrackers, origins }, ...] }. The
-// agent then publishes the file with the run, so the full logs don't have to go
-// through its context. Does nothing if the variable isn't set.
-async function etpRecordContentBlockingLog(mode, result, blocked) {
+// The JSON file named by ETP_CONTENT_BLOCKING_LOG_FILE holds every log
+// get_content_blocking_log returned, under the mode last set with
+// set_etp_mode, and the versions of the filter lists set_etp_mode loaded:
+// { [mode]: [{ time, url, private, blockedTrackers, origins }, ...],
+//   filterListVersions: { easylist: "202611170830", ... } }. The agent then
+// publishes the file with the run, so the full logs don't have to go through
+// its context. Does nothing if the variable isn't set.
+async function etpUpdateContentBlockingLogFile(update) {
   const path = process.env.ETP_CONTENT_BLOCKING_LOG_FILE;
   if (!path) {
     return;
@@ -455,28 +694,43 @@ async function etpRecordContentBlockingLog(mode, result, blocked) {
       throw e;
     }
   }
-  (logs[mode] ??= []).push({
-    time: new Date().toISOString(),
-    url: result.url,
-    blockedTrackers: blocked,
-    origins: result.origins,
-  });
+  update(logs);
   await writeFile(path, JSON.stringify(logs, null, 2));
+}
+
+async function etpRecordContentBlockingLog(mode, result, blocked) {
+  await etpUpdateContentBlockingLogFile((logs) => {
+    (logs[mode] ??= []).push({
+      time: new Date().toISOString(),
+      url: result.url,
+      private: result.private,
+      blockedTrackers: blocked,
+      origins: result.origins,
+    });
+  });
 }
 
 async function handleGetContentBlockingLog() {
   try {
     // Async, since getContentBlockingLog() may return a promise.
-    const result = await etpRunChrome(ETP_CONTENT_BLOCKING_LOG_SCRIPT, {
-      isAsync: true,
-    });
+    const { getFirefox: getFirefox2 } = await Promise.resolve().then(
+      () => (init_src(), src_exports)
+    );
+    const firefox3 = await getFirefox2();
+    const result = await etpRunChrome(
+      ETP_CONTENT_BLOCKING_LOG_SCRIPT,
+      { isAsync: true },
+      firefox3.getCurrentContextId()
+    );
     if (result.error) {
       throw new Error(result.error);
     }
     const blocked = etpBlockedTrackers(result.origins);
     await etpRecordContentBlockingLog(etpCurrentMode, result, blocked);
     return successResponse(
-      `Content blocking log for ${result.url}:\n` +
+      `Content blocking log for ${result.url}` +
+        (result.private ? " (private window)" : "") +
+        ":\n" +
         `Blocked trackers: ${blocked.length}` +
         (blocked.length ? ` (${blocked.join(", ")})` : "") +
         "\n" +
@@ -574,18 +828,23 @@ var waitForPageLoadTool = {
 var setEtpModeTool = {
   name: "set_etp_mode",
   description:
-    'Switch Enhanced Tracking Protection to the Standard or Strict category at runtime (no restart). Firefox applies all of the category\'s prefs at once; the response lists the ones off their Standard values. Also clears all cookies, site data and caches, so the next load is a first visit (logins and site state are lost). Switching to Strict fails with an error if the tracker lists or the ETP exception list can\'t be downloaded. "strict/easyprivacy" and "strict/easylist+easyprivacy" are Strict, but block with the EasyPrivacy list, or EasyList and EasyPrivacy together (via the content classifier), instead of the tracker lists, fingerprinter and cryptominer lists and the ETP exception list; they wait until the lists are downloaded and blocking, and fail if they aren\'t. Reload the page afterwards. Requires MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1.',
+    "Switch Enhanced Tracking Protection to a configuration at runtime (no restart): an ETP category (off, standard or strict) plus any of the EasyList and EasyPrivacy filter lists, all blocking at once. Firefox applies all of the category's prefs at once; the response lists the ones off their Standard values and the content classifier engines. \"off\" turns every tracker feature off and leaves cookies unrestricted. Filter lists block via the content classifier, next to the category's tracker lists, and the skip-URL prefs don't lift them; the switch waits until they are downloaded and blocking, and fails if they aren't. Switching to standard or strict fails with an error if the tracker lists or the ETP exception list can't be downloaded. Also clears all cookies, site data and caches, so the next load is a first visit (logins and site state are lost). In a Private Browsing run, it then closes the private window it opened last and opens a fresh one, whose tab becomes the selected page. The response gives each filter list's version. Reload the page afterwards. Requires MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1.",
   inputSchema: {
     type: "object",
     properties: {
-      mode: {
+      etp: {
         type: "string",
-        enum: ETP_MODES,
+        enum: ETP_LEVELS,
+        description: "ETP category to switch to",
+      },
+      filter_lists: {
+        type: "array",
+        items: { type: "string", enum: Object.keys(ETP_FILTER_LISTS) },
         description:
-          "ETP category to switch to; strict/easyprivacy is Strict with the EasyPrivacy list as the only block list, strict/easylist+easyprivacy with EasyList and EasyPrivacy as the only block lists",
+          "Filter lists to block with as well (default none): easylist (ads), easyprivacy (trackers)",
       },
     },
-    required: ["mode"],
+    required: ["etp"],
   },
 };
 

@@ -1,7 +1,13 @@
 // Everything that changes the store: API calls, the run's event stream, and
 // form edits that need more than a plain field assignment.
 
-import { api, type BugQuery, type RunInfo } from "./api";
+import {
+  api,
+  type BugQuery,
+  type RunInfo,
+  type RunOptions,
+  type TargetConfig,
+} from "./api";
 import {
   DEFAULT_OPTIONS,
   store,
@@ -48,6 +54,7 @@ export function loadRuns() {
 }
 
 export function selectRun(runId: string) {
+  store.compare = null;
   location.hash = encodeURIComponent(runId);
 }
 
@@ -62,6 +69,18 @@ export async function startRun() {
   start.busy = true;
   start.error = null;
   try {
+    if (start.configs.length) {
+      if (!start.bugId)
+        throw new Error("Comparing configurations needs a bug ID");
+      const runs = await api.startBatch({
+        ...start.options,
+        bug_ids: [Number(start.bugId)],
+        configs: [...start.configs],
+      });
+      loadRuns();
+      selectRun(runs[0].run_id);
+      return;
+    }
     const run = await api.startRun({
       ...start.options,
       bug_id: start.bugId ? Number(start.bugId) : null,
@@ -74,6 +93,30 @@ export async function startRun() {
   } finally {
     start.busy = false;
   }
+}
+
+// --- comparing the runs of one bug ------------------------------------------
+
+export async function openCompare(bugId: number) {
+  store.compare = { bugId, rows: null, error: null };
+  const compare = store.compare;
+  try {
+    compare.rows = await api.compare(bugId);
+  } catch (err) {
+    compare.error = message(err);
+  }
+}
+
+export function closeCompare() {
+  store.compare = null;
+}
+
+/** Add the form's current target to the configurations to compare. */
+export function addConfig(configs: TargetConfig[], options: RunOptions) {
+  const { etp, easylist, easyprivacy, private: priv } = options;
+  const config = { etp, easylist, easyprivacy, private: priv };
+  if (!configs.some((c) => JSON.stringify(c) === JSON.stringify(config)))
+    configs.push(config);
 }
 
 // --- the selected run -------------------------------------------------------
@@ -286,6 +329,7 @@ export function openTriage(query: BugQuery) {
     bugs: [],
     selected: [],
     options: { ...DEFAULT_OPTIONS },
+    configs: [],
     busy: false,
     error: null,
   };
@@ -343,6 +387,7 @@ export async function queueSelected() {
     const runs = await api.startBatch({
       ...triage.options,
       bug_ids: [...triage.selected],
+      configs: triage.configs.length ? [...triage.configs] : undefined,
     });
     closeTriage();
     loadRuns();

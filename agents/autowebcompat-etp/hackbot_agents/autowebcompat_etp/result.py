@@ -2,7 +2,7 @@
 
 import re
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -199,40 +199,19 @@ class ProposedShim(BaseModel):
 class BlockedTrackers(BaseModel):
     """The number of blocked trackers at each screenshot, keyed like them."""
 
-    standard: Annotated[
+    baseline: Annotated[
         int | None,
         Field(
             ge=0,
-            description="Blocked trackers when you took the Standard screenshot.",
+            description="Blocked trackers when you took the baseline screenshot.",
         ),
     ] = None
 
-    strict: Annotated[
+    target: Annotated[
         int | None,
         Field(
             ge=0,
-            description="Blocked trackers when you took the Strict screenshot.",
-        ),
-    ] = None
-
-    easyprivacy: Annotated[
-        int | None,
-        Field(
-            ge=0,
-            description=(
-                "Blocked trackers when you took the `strict/easyprivacy` screenshot."
-            ),
-        ),
-    ] = None
-
-    easylist: Annotated[
-        int | None,
-        Field(
-            ge=0,
-            description=(
-                "Blocked trackers when you took the `strict/easylist+easyprivacy` "
-                "screenshot."
-            ),
+            description="Blocked trackers when you took the target screenshot.",
         ),
     ] = None
 
@@ -246,11 +225,15 @@ class BlockedTrackers(BaseModel):
 
 
 class EtpInvestigationResult(BaseModel):
+    # Whether the target configuration blocks with filter lists, which decides
+    # when `broken_without_lists` is required. True in EtpListsTargetResult.
+    target_has_lists: ClassVar[bool] = False
+
     summary: Annotated[
         str,
         Field(
-            description="""A 2-4 sentence summary of your findings: what breaks in Strict
-        mode, which blocked resource causes it, and what fixes it (an exception or a
+            description="""A 2-4 sentence summary of your findings: what breaks in the
+        target configuration, which blocked resource causes it, and what fixes it (an exception or a
         shim).
 
         Hard limit: 500 characters, not counting link URLs. State conclusions, not
@@ -263,7 +246,7 @@ class EtpInvestigationResult(BaseModel):
             Literal["not_etp"]
             | Literal["not_reproducible"]
             | Literal["fixed_by_list_update"]
-            | Literal["broken_in_standard"]
+            | Literal["broken_in_baseline"]
             | Literal["not_fixable_by_exception"]
             | Literal["exception_not_verified"]
             | Literal["anti_adblock"]
@@ -277,19 +260,22 @@ class EtpInvestigationResult(BaseModel):
         ),
         Field(
             description="""`null` if you verified that lifting classifier blocking fixes the
-        Strict-mode breakage and propose exceptions or a shim. Otherwise one of:
+        breakage in the target configuration and propose exceptions or a shim. Otherwise one of:
           * not_etp - The report doesn't describe site breakage that could be caused by
           tracking protection (e.g. a Firefox UI issue, or a webcompat issue that the
           report itself shows happens with default settings)
-          * not_reproducible - You ran all the steps but the site works in Strict mode too
-          * fixed_by_list_update - The site works in Strict mode, and `check_tracker_lists`
+          * not_reproducible - You ran all the steps but the site works in the target
+          configuration too
+          * fixed_by_list_update - The site works in the target configuration, and `check_tracker_lists`
           shows that a host serving the broken feature was recently removed from the
           tracker lists: the reporter's profile most likely still had the older lists
-          * broken_in_standard - The breakage also happens in Standard mode, so it is not
-          caused by Strict mode
-          * not_fixable_by_exception - Strict mode causes the breakage, but through a
-          protection the exception list can't lift (cookie/storage restrictions,
-          fingerprinting protection, query stripping, bounce tracking protection, ...)
+          * broken_in_baseline - The breakage also happens in the baseline
+          configuration, so the target configuration doesn't cause it
+          * not_fixable_by_exception - The target configuration causes the breakage,
+          but through something the exception list can't lift: a protection like
+          cookie/storage restrictions, fingerprinting protection, query stripping or
+          bounce tracking protection, or blocking by the EasyList/EasyPrivacy filter
+          lists. Name the blocking list and hosts in the summary
           * exception_not_verified - Classifier blocking causes the breakage, but no
           exception you tested fixed it
           * anti_adblock - The site detects that its ads or trackers are blocked and
@@ -309,50 +295,38 @@ class EtpInvestigationResult(BaseModel):
         ),
     ]
 
-    broken_in_standard: Annotated[
+    broken_in_baseline: Annotated[
         bool | None,
         Field(
             description=(
-                "true if the reported breakage happens with Standard ETP, false if "
-                "the site works in Standard, null if you couldn't test it."
+                "true if the reported breakage happens in the baseline "
+                "configuration, false if the site works there, null if you "
+                "couldn't test it."
             ),
         ),
     ]
 
-    broken_in_strict: Annotated[
+    broken_in_target: Annotated[
         bool | None,
         Field(
             description=(
-                "true if the reported breakage happens with Strict ETP, false if "
-                "the site works in Strict, null if you couldn't test it."
+                "true if the reported breakage happens in the target "
+                "configuration, false if the site works there, null if you "
+                "couldn't test it."
             ),
         ),
     ]
 
-    broken_with_easyprivacy: Annotated[
+    broken_without_lists: Annotated[
         bool | None,
         Field(
             description=(
-                "true if the reported breakage also happens in the "
-                "`strict/easyprivacy` mode (Strict with the EasyPrivacy list "
-                "instead of the tracker lists), false if the site works there, "
-                "i.e. EasyPrivacy would not have broken it. Null if you didn't "
-                "test it, which includes every run where `broken_in_strict` "
-                "isn't true."
-            ),
-        ),
-    ]
-
-    broken_with_easylist: Annotated[
-        bool | None,
-        Field(
-            description=(
-                "true if the reported breakage also happens in the "
-                "`strict/easylist+easyprivacy` mode (Strict with EasyList and "
-                "EasyPrivacy instead of the tracker lists), false if the site "
-                "works there, i.e. those lists together would not have broken "
-                "it. Null if you didn't test it, which includes every run where "
-                "`broken_in_strict` isn't true."
+                "Only when the target configuration has filter lists, "
+                "`broken_in_target` is true and the failure reason isn't "
+                "`broken_in_baseline`: true if the breakage also happens "
+                "with the target's ETP level and no filter lists, false if the "
+                "site works then (the filter lists alone cause it). Null "
+                "otherwise."
             ),
         ),
     ]
@@ -361,10 +335,10 @@ class EtpInvestigationResult(BaseModel):
         list[str],
         Field(
             description=(
-                "The Strict-mode preference(s) behind the breakage, e.g. "
+                "The target-configuration preference(s) behind the breakage, e.g. "
                 "`privacy.trackingprotection.socialtracking.enabled`: the classifier "
                 "prefs of the features in your verified skip-URL set, or the prefs "
-                "whose reversion to the Standard value fixed it. Empty if you didn't "
+                "whose reversion to the baseline value fixed it. Empty if you didn't "
                 "isolate it."
             ),
         ),
@@ -374,7 +348,8 @@ class EtpInvestigationResult(BaseModel):
         list[str],
         Field(
             description=(
-                "Origins the content blocking log shows as blocked in Strict mode that "
+                "Origins the content blocking log shows as blocked in the target "
+                "configuration that "
                 "are relevant to the breakage, each followed by the blocking "
                 "feature(s), e.g. `https://platform.linkedin.com "
                 "(socialtracking-protection, tracking-protection)`."
@@ -410,7 +385,8 @@ class EtpInvestigationResult(BaseModel):
         bool,
         Field(
             description=(
-                "true if, in Strict mode with the blocked resources allowed via the "
+                "true if, in the target configuration with the blocked resources "
+                "allowed via the "
                 "skip-URL prefs, they loaded and the reported breakage was gone."
             ),
         ),
@@ -452,7 +428,8 @@ class EtpInvestigationResult(BaseModel):
         str,
         Field(
             description=(
-                "The ordered steps to reproduce the breakage in Strict mode and to "
+                "The ordered steps to reproduce the breakage in the target "
+                "configuration and to "
                 "verify the exception, as a single numbered list (1., 2., 3., ... one "
                 "step per line), including every pref you set, written so another "
                 "agent could repeat them with no extra context."
@@ -460,46 +437,24 @@ class EtpInvestigationResult(BaseModel):
         ),
     ]
 
-    screenshot_standard: Annotated[
+    screenshot_baseline: Annotated[
         Path | None,
         Field(
             description=(
-                "The exact `saveTo` path you were given for the Standard-mode "
+                "The exact `saveTo` path you were given for the baseline "
                 "screenshot, after saving it there with `screenshot_page`. Null if "
-                "you didn't load the page in Standard mode."
+                "you didn't load the page in the baseline configuration."
             ),
         ),
     ] = None
 
-    screenshot_strict: Annotated[
+    screenshot_target: Annotated[
         Path | None,
         Field(
             description=(
-                "The exact `saveTo` path you were given for the Strict-mode "
-                "screenshot showing the breakage. Null if you didn't load the page "
-                "in Strict mode."
-            ),
-        ),
-    ] = None
-
-    screenshot_easyprivacy: Annotated[
-        Path | None,
-        Field(
-            description=(
-                "The exact `saveTo` path you were given for the screenshot in the "
-                "`strict/easyprivacy` mode. Null if you didn't load the page in "
-                "that mode."
-            ),
-        ),
-    ] = None
-
-    screenshot_easylist: Annotated[
-        Path | None,
-        Field(
-            description=(
-                "The exact `saveTo` path you were given for the screenshot in the "
-                "`strict/easylist+easyprivacy` mode. Null if you didn't load the "
-                "page in that mode."
+                "The exact `saveTo` path you were given for the target screenshot "
+                "showing the breakage. Null if you didn't load the page in the "
+                "target configuration."
             ),
         ),
     ] = None
@@ -508,8 +463,9 @@ class EtpInvestigationResult(BaseModel):
         Path | None,
         Field(
             description=(
-                "The exact `saveTo` path you were given for the screenshot in "
-                "Strict mode with the skip-URL prefs applied, showing the fix. Null "
+                "The exact `saveTo` path you were given for the screenshot in the "
+                "target configuration with the skip-URL prefs applied, showing the "
+                "fix. Null "
                 "unless `exception_verified` is true."
             ),
         ),
@@ -521,17 +477,15 @@ class EtpInvestigationResult(BaseModel):
             description=(
                 "For each screenshot you took, the `Blocked trackers` count "
                 "`get_content_blocking_log` reported right after it, under the "
-                "same name as the screenshot field (`strict` for "
-                "`screenshot_strict`). Null for screenshots you didn't take."
+                "same name as the screenshot field (`target` for "
+                "`screenshot_target`). Null for screenshots you didn't take."
             ),
         ),
     ] = BlockedTrackers()
 
     @field_validator(
-        "screenshot_standard",
-        "screenshot_strict",
-        "screenshot_easyprivacy",
-        "screenshot_easylist",
+        "screenshot_baseline",
+        "screenshot_target",
         "screenshot_fixed",
         mode="after",
     )
@@ -580,14 +534,6 @@ class EtpInvestigationResult(BaseModel):
                 "proposed_exceptions and proposed_shim must be empty when "
                 "failure_reason is set to anything but anti_adblock"
             )
-        if self.broken_in_strict is not True:
-            for field in ("broken_with_easyprivacy", "broken_with_easylist"):
-                if getattr(self, field) is not None:
-                    raise ValueError(
-                        f"{field} must be null unless broken_in_strict is true: "
-                        "the filter-list comparison only runs when Strict is "
-                        "broken"
-                    )
         if (self.severity is None) != (self.priority is None):
             raise ValueError("set both severity and priority, or neither")
         return self
@@ -601,3 +547,42 @@ class EtpInvestigationResult(BaseModel):
                     "null: give the count only for screenshots you took"
                 )
         return self
+
+    @model_validator(mode="after")
+    def validate_broken_without_lists(self) -> EtpInvestigationResult:
+        if not (
+            self.target_has_lists
+            and self.broken_in_target is True
+            and self.failure_reason != "broken_in_baseline"
+        ):
+            if self.broken_without_lists is not None:
+                raise ValueError(
+                    "broken_without_lists must be null unless the target "
+                    "configuration has filter lists, broken_in_target is true and "
+                    "the breakage isn't in the baseline"
+                )
+            return self
+        if self.broken_without_lists is None:
+            raise ValueError(
+                "the target configuration has filter lists and broke: call "
+                "set_etp_mode with the target's etp and no filter_lists, load the "
+                "page again, follow the steps, and set broken_without_lists to "
+                "whether it still breaks"
+            )
+        if self.broken_without_lists is False and (
+            self.failure_reason != "not_fixable_by_exception"
+            or self.proposed_exceptions
+            or self.proposed_shim is not None
+        ):
+            raise ValueError(
+                "broken_without_lists is false, so the filter lists alone cause "
+                "the breakage and no exception can lift them: set failure_reason "
+                "to not_fixable_by_exception and propose no exceptions or shim"
+            )
+        return self
+
+
+class EtpListsTargetResult(EtpInvestigationResult):
+    """The result of a run whose target configuration has filter lists."""
+
+    target_has_lists: ClassVar[bool] = True

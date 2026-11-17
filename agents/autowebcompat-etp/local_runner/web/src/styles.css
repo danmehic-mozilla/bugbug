@@ -366,3 +366,10 @@ button.tab.on {
   font-size: 20px;
   padding: 0 4px;
 }
+
+img.thumb {
+  width: 80px;
+  margin-right: 4px;
+  border: 1px solid var(--border, #ccc);
+  vertical-align: top;
+}

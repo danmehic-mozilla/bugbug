@@ -1,4 +1,4 @@
-import type { RunInfo } from "./api";
+import type { EtpLevel, RunInfo } from "./api";
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
@@ -27,4 +27,26 @@ export function brokenLabel(value: boolean | null): string {
 
 export function isActive(run: RunInfo): boolean {
   return run.active && run.finished == null;
+}
+
+const ETP_LABELS: Record<EtpLevel, string> = {
+  off: "ETP off",
+  standard: "Standard",
+  strict: "Strict",
+};
+
+/** E.g. "Strict + EasyList · private"; empty when the run recorded no target. */
+export function configLabel(config: {
+  etp?: EtpLevel | null;
+  easylist?: boolean;
+  easyprivacy?: boolean;
+  private?: boolean | null;
+}): string {
+  if (!config.etp) return "";
+  const parts = [
+    ETP_LABELS[config.etp],
+    ...(config.easylist ? ["EasyList"] : []),
+    ...(config.easyprivacy ? ["EasyPrivacy"] : []),
+  ];
+  return parts.join(" + ") + (config.private ? " · private" : "");
 }
