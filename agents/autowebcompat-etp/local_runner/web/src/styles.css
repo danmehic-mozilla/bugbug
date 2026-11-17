@@ -430,3 +430,15 @@ button.toggle {
   font: inherit;
   cursor: pointer;
 }
+button.copy {
+  font-size: 11px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+}
+button.copy:hover {
+  color: var(--fg);
+}
