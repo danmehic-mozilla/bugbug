@@ -152,7 +152,10 @@ export function RunOptionsFields({
               checked={native}
               onChange={() => (options.native = true)}
             />
-            Local build <span className="mono">{localFirefox}</span>
+            <span>
+              Local build
+              <span className="mono path">{localFirefox}</span>
+            </span>
           </label>
           <label className="check">
             <input
