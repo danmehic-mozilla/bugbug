@@ -153,6 +153,18 @@ export function RunOptionsFields({
         />
         Retest with convenience ETP exceptions
       </label>
+      {snap.etp !== "off" && !baselineExceptions && (
+        <div className="note">
+          Baseline exceptions off: this tests as if no ETP exceptions existed
+          (use it to check whether an exception is still needed).
+        </div>
+      )}
+      {snap.etp === "strict" && convenienceExceptions && (
+        <div className="note">
+          Convenience exceptions normally only apply in Strict when a user opts
+          in.
+        </div>
+      )}
       <div className="meta">
         Baseline (should work): {configLabel(baselineConfig(snap))}
       </div>

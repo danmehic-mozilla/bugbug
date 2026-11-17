@@ -473,6 +473,24 @@ def test_user_prompt_off_without_lists_is_a_control_run(tmp_path):
     )
 
 
+def test_firefox_devtools_server_native_prefs(tmp_path, monkeypatch):
+    monkeypatch.setattr(mcp_servers, "resolve_bin", lambda name: name)
+    native_prefs = [
+        "network.proxy.type=0",
+        "security.enterprise_roots.enabled=true",
+    ]
+
+    monkeypatch.delenv("LOCAL_FIREFOX", raising=False)
+    args = mcp_servers.build_firefox_devtools_server(tmp_path)["args"]
+    for pref in native_prefs:
+        assert pref not in args
+
+    monkeypatch.setenv("LOCAL_FIREFOX", "/ff/firefox")
+    args = mcp_servers.build_firefox_devtools_server(tmp_path)["args"]
+    for pref in native_prefs:
+        assert args[args.index(pref) - 1] == "--pref"
+
+
 def test_firefox_devtools_server_private(tmp_path, monkeypatch):
     monkeypatch.setattr(mcp_servers, "resolve_bin", lambda name: name)
     server = mcp_servers.build_firefox_devtools_server(tmp_path)

@@ -46,6 +46,7 @@ def isolated(tmp_path, monkeypatch):
     # The worker threads wait on the original queue, so nothing queued here runs.
     monkeypatch.setattr(server, "RUN_QUEUE", queue.Queue())
     monkeypatch.setattr(server, "MODELS_CACHE", None)
+    monkeypatch.setattr(server, "SUMMARY_CACHE", {})
     return artifacts
 
 
@@ -595,3 +596,62 @@ def test_bug_draft_loads_reporter_and_changes(client, isolated, bugzilla_calls):
         "reporter": "reporter@example.com",
     }
     assert [call[:2] for call in bugzilla_calls] == [("GET", "bug/7")]
+
+
+@pytest.mark.parametrize(
+    "summary,expected",
+    [
+        (
+            "www.shit-facedshakespeare.us - Broken design, No CSS with Standard ETP"
+            " in PBM",
+            {"etp": "standard", "private": True},
+        ),
+        (
+            "Unable to proceed with the checkout on bonoxs.com with Strict ETP",
+            {"etp": "strict", "private": None},
+        ),
+        (
+            "currys.co.uk - When adding an item to cart, the animation is stuck",
+            {"etp": None, "private": None},
+        ),
+        ("example.com - Video does not play with ETP Strict", {"etp": "strict"}),
+        ("example.com - Login fails in strict mode", {"etp": "strict"}),
+        ("example.com - Blank page, ETP standard", {"etp": "standard"}),
+        (
+            "example.com - Images missing in a Private Window",
+            {"etp": None, "private": True},
+        ),
+        ("example.com - Map broken in private browsing", {"private": True}),
+        ("example.com - Strictly speaking, the page is stuck", {"etp": None}),
+    ],
+)
+def test_reported_config(summary, expected):
+    assert server.reported_config(summary).items() >= expected.items()
+
+
+def test_reported_config_endpoint(client, monkeypatch):
+    calls = []
+
+    def fake(method, path, body=None, params=None, auth_required=True):
+        calls.append((method, path, params, auth_required))
+        return {"bugs": [{"summary": "site.example - No CSS with Standard ETP in PBM"}]}
+
+    monkeypatch.setattr(server, "bugzilla", fake)
+    expected = {
+        "summary": "site.example - No CSS with Standard ETP in PBM",
+        "etp": "standard",
+        "private": True,
+    }
+    assert client.get("/api/bugs/2092519/reported-config").json() == expected
+    # The second request is served from the cache.
+    assert client.get("/api/bugs/2092519/reported-config").json() == expected
+    assert calls == [("GET", "bug/2092519", {"include_fields": "summary"}, False)]
+
+
+def test_reported_config_endpoint_bugzilla_error(client, monkeypatch):
+    def fake(method, path, body=None, params=None, auth_required=True):
+        raise server.HTTPException(502, "Bugzilla GET: 401")
+
+    monkeypatch.setattr(server, "bugzilla", fake)
+    assert client.get("/api/bugs/2092519/reported-config").status_code == 502
+    assert client.get("/api/bugs/nope/reported-config").status_code == 422
