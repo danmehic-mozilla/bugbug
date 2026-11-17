@@ -192,6 +192,61 @@ def test_execute_fetches_missing_lists_once(popen, monkeypatch):
     assert server.filter_list_info("easyprivacy")["version"] == "202611170900"
 
 
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        ({}, {}),
+        (
+            {"exceptions_baseline": True, "exceptions_convenience": True},
+            {"EXCEPTIONS_BASELINE": "true", "EXCEPTIONS_CONVENIENCE": "true"},
+        ),
+        ({"exceptions_baseline": False}, {"EXCEPTIONS_BASELINE": "false"}),
+        (
+            {"exceptions_baseline": None, "exceptions_convenience": False},
+            {"EXCEPTIONS_CONVENIENCE": "false"},
+        ),
+    ],
+)
+def test_execute_passes_exception_overrides(popen, monkeypatch, params, expected):
+    monkeypatch.setattr(server, "LOCAL_FIREFOX", "/ff/firefox")
+    for name in ("EXCEPTIONS_BASELINE", "EXCEPTIONS_CONVENIENCE"):
+        monkeypatch.delenv(name, raising=False)
+    _, _, kwargs = execute({"bug_id": 1, "etp": "strict"} | params)
+    env = kwargs["env"]
+    assert {
+        name: env[name]
+        for name in ("EXCEPTIONS_BASELINE", "EXCEPTIONS_CONVENIENCE")
+        if name in env
+    } == expected
+
+
+def test_execute_passes_legacy_retest_mode(popen):
+    _, cmd, _ = execute({"bug_id": 1, "etp": "strict", "mode": "retest"})
+    env_args = {cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-e"}
+    assert "MODE=retest" in env_args
+    assert not any(arg.startswith("EXCEPTIONS_") for arg in env_args)
+
+
+def test_start_accepts_exception_overrides_and_legacy_retest(client):
+    response = client.post(
+        "/api/runs",
+        json={"bug_id": 1, "etp": "strict", "exceptions_convenience": True},
+    )
+    assert response.status_code == 200
+    params = response.json()["params"]
+    assert params["exceptions_baseline"] is None
+    assert params["exceptions_convenience"] is True
+
+    response = client.post("/api/runs", json={"bug_id": 2, "mode": "retest"})
+    assert response.status_code == 200
+    assert response.json()["params"]["mode"] == "retest"
+
+    response = client.post(
+        "/api/runs", json={"bug_id": 3, "exceptions_baseline": "maybe"}
+    )
+    assert response.status_code == 422
+
+
 # --- batches -------------------------------------------------------------------
 
 
@@ -216,6 +271,25 @@ def test_batch_expands_bugs_and_configs(client):
     assert params[1]["easylist"] and params[1]["private"]
     assert not params[0]["easylist"] and not params[0]["private"]
     assert server.RUN_QUEUE.qsize() == 4
+
+
+def test_batch_configs_carry_exception_overrides(client):
+    configs = [
+        {"etp": "strict"},
+        {"etp": "strict", "exceptions_convenience": True},
+        {"etp": "standard", "exceptions_baseline": False},
+    ]
+    response = client.post(
+        "/api/runs/batch",
+        json={"bug_ids": [10], "configs": configs, "mode": "retest"},
+    )
+    params = [run["params"] for run in response.json()]
+    assert [
+        (p["etp"], p["exceptions_baseline"], p["exceptions_convenience"])
+        for p in params
+    ] == [("strict", None, None), ("strict", None, True), ("standard", False, None)]
+    # A legacy top-level mode still applies to every configuration.
+    assert {p["mode"] for p in params} == {"retest"}
 
 
 def test_batch_without_configs_uses_request_target(client):
@@ -256,6 +330,9 @@ def test_compare(client, isolated):
             "filter_lists": ["easylist"],
             "filter_list_versions": {"easylist": "202611170830"},
             "private": False,
+            "mode": "investigate",
+            "exceptions_baseline": True,
+            "exceptions_convenience": False,
             "broken_in_baseline": False,
             "broken_in_target": True,
             "screenshot_urls": {"target": "shots/target.png", "gone": "x.png"},
@@ -282,10 +359,12 @@ def test_compare(client, isolated):
     assert new["filter_list_versions"] == {"easylist": "202611170830"}
     assert (new["broken_in_baseline"], new["broken_in_target"]) == (False, True)
     assert new["screenshots"] == {"target": "shots/target.png"}
+    assert (new["exceptions_baseline"], new["exceptions_convenience"]) == (True, False)
 
     legacy = rows["etp-bug5-20261101-100000"]
     assert (legacy["broken_in_baseline"], legacy["broken_in_target"]) == (False, True)
     assert legacy["etp"] is None and legacy["has_result"]
+    assert legacy["exceptions_baseline"] is None
 
 
 # --- models --------------------------------------------------------------------

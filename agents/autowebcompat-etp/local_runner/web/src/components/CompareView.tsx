@@ -16,6 +16,9 @@ function rowConfig(row: {
   params: CompareRow["params"];
   etp: CompareRow["etp"];
   private: CompareRow["private"];
+  mode: CompareRow["mode"];
+  exceptions_baseline: CompareRow["exceptions_baseline"];
+  exceptions_convenience: CompareRow["exceptions_convenience"];
   filter_lists: readonly FilterList[] | null;
 }) {
   const lists = row.filter_lists ?? [];
@@ -26,6 +29,9 @@ function rowConfig(row: {
         easylist: lists.includes("easylist"),
         easyprivacy: lists.includes("easyprivacy"),
         private: row.private,
+        mode: row.mode,
+        exceptions_baseline: row.exceptions_baseline,
+        exceptions_convenience: row.exceptions_convenience,
       };
 }
 

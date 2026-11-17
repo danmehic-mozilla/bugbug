@@ -249,6 +249,10 @@ class StartRequest(BaseModel):
     easylist: bool = False
     easyprivacy: bool = False
     private: bool = False
+    # Whether each ETP exception category applies; null keeps the ETP level's
+    # default. Legacy mode=retest means baseline off.
+    exceptions_baseline: bool | None = None
+    exceptions_convenience: bool | None = None
     # Run with LOCAL_FIREFOX instead of in Docker; null means natively when
     # LOCAL_FIREFOX is set.
     native: bool | None = None
@@ -260,6 +264,8 @@ class TargetConfig(BaseModel):
     easylist: bool = False
     easyprivacy: bool = False
     private: bool = False
+    exceptions_baseline: bool | None = None
+    exceptions_convenience: bool | None = None
 
 
 class BatchRequest(BaseModel):
@@ -273,8 +279,10 @@ class BatchRequest(BaseModel):
     easylist: bool = False
     easyprivacy: bool = False
     private: bool = False
+    exceptions_baseline: bool | None = None
+    exceptions_convenience: bool | None = None
     # When set, one run per bug and configuration; each overrides the
-    # etp/easylist/easyprivacy/private above.
+    # etp/easylist/easyprivacy/private/exceptions_* above.
     configs: list[TargetConfig] | None = None
     native: bool | None = None
     build: bool = True
@@ -387,6 +395,9 @@ def execute(run: Run) -> None:
     for name in ("easylist", "easyprivacy", "private"):
         if params.get(name):
             agent_env[name.upper()] = "true"
+    for name in ("exceptions_baseline", "exceptions_convenience"):
+        if params.get(name) is not None:
+            agent_env[name.upper()] = "true" if params[name] else "false"
     if lists := [name for name in FILTER_LIST_URLS if params.get(name)]:
         if missing := [n for n in lists if not filter_list_info(n)["present"]]:
             run.add_line(
@@ -531,6 +542,7 @@ def stored_run_info(path: Path) -> dict[str, Any] | None:
             "easylist": "easylist" in lists,
             "easyprivacy": "easyprivacy" in lists,
             "private": bool(result.get("private")),
+            "mode": result.get("mode") or "investigate",
         }
     return meta
 
@@ -894,6 +906,9 @@ def compare_runs(bug_id: int) -> list[dict[str, Any]]:
                 "has_result": bool(result),
                 "etp": result.get("etp"),
                 "private": result.get("private"),
+                "mode": result.get("mode"),
+                "exceptions_baseline": result.get("exceptions_baseline"),
+                "exceptions_convenience": result.get("exceptions_convenience"),
                 "filter_lists": result.get("filter_lists"),
                 "filter_list_versions": result.get("filter_list_versions"),
                 "failure_reason": result.get("failure_reason"),

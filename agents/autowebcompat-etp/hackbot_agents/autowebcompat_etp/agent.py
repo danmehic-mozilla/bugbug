@@ -61,7 +61,8 @@ PublishFile = Callable[[str, Path, str | None], str]
 
 # How the harness runs the agent: `investigate` a new report, or `retest` an old
 # one with Firefox's ETP exception list turned off, to see whether the site
-# still breaks without the exceptions it may already have.
+# still breaks without the exceptions it may already have. `retest` is the same
+# as turning the baseline exceptions off.
 Mode = Literal["investigate", "retest"]
 
 # The configuration the agent investigates (the target): an ETP category plus
@@ -76,6 +77,46 @@ ETP_NAMES = {"off": "ETP off", "standard": "Standard ETP", "strict": "Strict ETP
 
 def baseline_etp(etp: EtpLevel) -> EtpLevel:
     return "standard" if etp == "strict" else "off"
+
+
+def default_exceptions(etp: EtpLevel) -> tuple[bool, bool]:
+    """Whether the baseline and convenience exceptions apply by default.
+
+    Strict turns convenience off (ContentBlockingPrefs); Standard and Off leave
+    both allow_list prefs at their default, on.
+    """
+    return True, etp != "strict"
+
+
+def exception_overrides(
+    etp: EtpLevel,
+    baseline: bool | None = None,
+    convenience: bool | None = None,
+    mode: Mode = "investigate",
+) -> tuple[bool | None, bool | None]:
+    """The allow_list overrides for a run, None where the ETP level's default stays.
+
+    `retest` turns baseline off. With baseline off, convenience is set off too:
+    Firefox ignores it then, and the pref says what applies. An override equal
+    to the target level's default is dropped, so it doesn't leak into the
+    baseline configuration.
+    """
+    if mode == "retest" or baseline is False:
+        return False, False
+    if convenience == default_exceptions(etp)[1]:
+        convenience = None
+    return None, convenience
+
+
+def effective_exceptions(
+    etp: EtpLevel, baseline: bool | None, convenience: bool | None
+) -> tuple[bool, bool]:
+    """Whether the baseline and convenience exceptions apply in the target."""
+    default_baseline, default_convenience = default_exceptions(etp)
+    applies = default_baseline if baseline is None else baseline
+    return applies, applies and (
+        default_convenience if convenience is None else convenience
+    )
 
 
 def describe_config(etp: EtpLevel, filter_lists: Sequence[FilterList] = ()) -> str:
@@ -108,6 +149,18 @@ list, so in the summary name the existing entries for this bug or site, and say
 whether the breakage still happens without them (they are still needed) or not
 (the site no longer needs them). In step 3, an existing exception cannot explain
 a site that works here."""
+
+EXCEPTIONS_NOTE = """\
+In this Firefox, {applying} in every mode ({level} defaults to {default}).
+`set_etp_mode` keeps it that way, so don't change the
+`privacy.trackingprotection.allow_list.*` prefs. The skip-URL prefs still work
+for testing. An existing exception in a category that applies here can explain
+a site that works; one in a category that doesn't apply can't."""
+EXCEPTIONS_APPLYING = {
+    (True, True): "both `baseline` and `convenience` ETP exception entries apply",
+    (True, False): "only `baseline` ETP exception entries apply (not `convenience`)",
+}
+DEFAULT_EXCEPTIONS_NAMES = {(True, True): "both", (True, False): "`baseline` only"}
 
 PRIVATE_NOTE = """\
 This is a Private Browsing run: test the baseline and the target in a private
@@ -152,6 +205,10 @@ class AutowebcompatEtpResult(EtpInvestigationResult):
     etp: EtpLevel = "strict"
     filter_lists: list[FilterList] = []
     private: bool = False
+    # Whether the baseline and convenience categories of the ETP exception list
+    # applied in the target (None in runs from before they were recorded).
+    exceptions_baseline: bool | None = None
+    exceptions_convenience: bool | None = None
     # The `! Version:` header of each filter list set_etp_mode loaded, by list.
     filter_list_versions: dict[str, str] | None = None
 
@@ -185,6 +242,8 @@ class EtpInvestigation(Task[EtpInvestigationResult]):
         etp: EtpLevel = "strict",
         filter_lists: tuple[FilterList, ...] = (),
         private: bool = False,
+        exceptions_baseline: bool | None = None,
+        exceptions_convenience: bool | None = None,
     ):
         # The submission is validated against the target: with filter lists,
         # broken_without_lists is required when it breaks.
@@ -197,6 +256,10 @@ class EtpInvestigation(Task[EtpInvestigationResult]):
         self.etp = etp
         self.filter_lists = filter_lists
         self.private = private
+        overrides = exception_overrides(
+            etp, exceptions_baseline, exceptions_convenience, mode
+        )
+        self.exceptions = effective_exceptions(etp, *overrides)
         self.screenshot_paths = {
             stage: screenshot_dir / f"{stage}.png" for stage in SCREENSHOT_FIELDS
         }
@@ -206,7 +269,8 @@ class EtpInvestigation(Task[EtpInvestigationResult]):
                 firefox_path,
                 headless=task_config.headless,
                 content_blocking_log_file=content_blocking_log_file,
-                disable_exceptions=mode == "retest",
+                exceptions_baseline=overrides[0],
+                exceptions_convenience=overrides[1],
                 private=private,
             ),
             DEVTOOLS_TOOLS + PRIVILEGED_TOOLS,
@@ -247,8 +311,16 @@ class EtpInvestigation(Task[EtpInvestigationResult]):
                 f"The web-compatibility report to work on is Bugzilla bug {self.input_data.bug_id}. "
                 "Fetch it using the Bugzilla MCP tools, then follow your task procedure."
             )
-        if self.mode == "retest":
+        if not self.exceptions[0]:
             report = f"{report}\n\n{RETEST_NOTE}"
+        elif self.etp != "off" and self.exceptions != default_exceptions(self.etp):
+            default = default_exceptions(self.etp)
+            note = EXCEPTIONS_NOTE.format(
+                applying=EXCEPTIONS_APPLYING[self.exceptions],
+                level=ETP_NAMES[self.etp],
+                default=DEFAULT_EXCEPTIONS_NAMES[default],
+            )
+            report = f"{report}\n\n{note}"
         target = describe_config(self.etp, self.filter_lists)
         baseline = baseline_etp(self.etp)
         report += (
@@ -456,11 +528,15 @@ async def run_autowebcompat_etp(
     etp: EtpLevel = "strict",
     filter_lists: tuple[FilterList, ...] = (),
     private: bool = False,
+    exceptions_baseline: bool | None = None,
+    exceptions_convenience: bool | None = None,
 ) -> AutowebcompatEtpResult:
     """Investigate an ETP breakage report and return the proposed fix.
 
-    In `retest` mode, Firefox runs with the ETP exception list turned off. With
-    `private`, every configuration is tested in a private window.
+    `exceptions_baseline` and `exceptions_convenience` turn that category of
+    the ETP exception list on or off in every configuration; None keeps the
+    ETP level's default. `retest` mode turns baseline off. With `private`,
+    every configuration is tested in a private window.
 
     Raises :class:`AgentError` if the agent ends in an error.
     """
@@ -473,7 +549,7 @@ async def run_autowebcompat_etp(
         screenshot_dir = Path(tempfile.mkdtemp(prefix="autowebcompat-etp-screenshots-"))
         log_dir = Path(tempfile.mkdtemp(prefix="autowebcompat-etp-logs-"))
         content_blocking_log_file = log_dir / CONTENT_BLOCKING_LOG_FILE
-        result = await EtpInvestigation(
+        investigation = EtpInvestigation(
             config,
             tracker,
             firefox_path,
@@ -485,7 +561,10 @@ async def run_autowebcompat_etp(
             etp,
             filter_lists,
             private,
-        ).run()
+            exceptions_baseline,
+            exceptions_convenience,
+        )
+        result = await investigation.run()
 
     records = exception_records(result, input_data)
     whiteboard_tags, user_story_lines = bug_tags(result)
@@ -505,6 +584,8 @@ async def run_autowebcompat_etp(
         etp=etp,
         filter_lists=list(filter_lists),
         private=private,
+        exceptions_baseline=investigation.exceptions[0],
+        exceptions_convenience=investigation.exceptions[1],
         filter_list_versions=read_filter_list_versions(
             content_blocking_log_file, filter_lists
         ),

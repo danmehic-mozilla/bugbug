@@ -21,7 +21,14 @@ const FILTER_LIST_NAMES = { easylist: "EasyList", easyprivacy: "EasyPrivacy" };
 function targetConfig(
   params: RunParams | undefined,
   result:
-    | (Pick<EtpResult, "etp" | "private"> & {
+    | (Pick<
+        EtpResult,
+        | "etp"
+        | "private"
+        | "mode"
+        | "exceptions_baseline"
+        | "exceptions_convenience"
+      > & {
         filter_lists?: readonly FilterList[];
       })
     | null
@@ -33,6 +40,9 @@ function targetConfig(
     easylist: lists.includes("easylist"),
     easyprivacy: lists.includes("easyprivacy"),
     private: result?.private,
+    mode: result?.mode,
+    exceptions_baseline: result?.exceptions_baseline,
+    exceptions_convenience: result?.exceptions_convenience,
   };
 }
 
@@ -153,6 +163,15 @@ export function ResultView() {
             <>
               <dt>Private Browsing Mode</dt>
               <dd>{result.private ? "yes" : "no"}</dd>
+            </>
+          )}
+          {(result.exceptions_baseline != null || result.mode === "retest") && (
+            <>
+              <dt>ETP exceptions applied</dt>
+              <dd>
+                baseline: {result.exceptions_baseline ? "yes" : "no"},
+                convenience: {result.exceptions_convenience ? "yes" : "no"}
+              </dd>
             </>
           )}
           {!!Object.keys(result.filter_list_versions ?? {}).length && (

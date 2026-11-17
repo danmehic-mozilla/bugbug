@@ -8,6 +8,7 @@ import {
   type RunOptions,
   type TargetConfig,
 } from "./api";
+import { exceptionOverrides } from "./format";
 import {
   DEFAULT_OPTIONS,
   store,
@@ -136,7 +137,13 @@ export function closeCompare() {
 /** Add the form's current target to the configurations to compare. */
 export function addConfig(configs: TargetConfig[], options: RunOptions) {
   const { etp, easylist, easyprivacy, private: priv } = options;
-  const config = { etp, easylist, easyprivacy, private: priv };
+  const config = {
+    etp,
+    easylist,
+    easyprivacy,
+    private: priv,
+    ...exceptionOverrides(options),
+  };
   if (!configs.some((c) => JSON.stringify(c) === JSON.stringify(config)))
     configs.push(config);
 }

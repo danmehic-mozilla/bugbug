@@ -22,6 +22,9 @@ Each run tests one **target configuration**:
 - **Filter lists:** EasyList and/or EasyPrivacy, layered on top of the ETP level
   and blocking together with it
 - **Private Browsing Mode:** test in a fresh private window
+- **ETP exceptions:** whether the baseline and convenience categories of the
+  ETP exception list apply (default: Firefox's for the ETP level). Convenience
+  needs baseline.
 
 The agent compares the target with a **baseline** where the site should work:
 ETP Standard for a Strict target, otherwise ETP Off without lists, in the same
@@ -48,9 +51,12 @@ The agent submits an `EtpInvestigationResult` (`result.py`). The main fields:
 ## Running it
 
 Inputs come from environment variables: `BUG_ID` or `BUG_DATA`, plus `ETP`
-(`off`|`standard`|`strict`), `EASYLIST`, `EASYPRIVACY`, `PRIVATE`, `MODE`
-(`investigate`, or `retest` to rerun with the ETP exception list off), `MODEL`,
-`EFFORT`, `MAX_TURNS` and `HEADLESS`.
+(`off`|`standard`|`strict`), `EASYLIST`, `EASYPRIVACY`, `PRIVATE`,
+`EXCEPTIONS_BASELINE` and `EXCEPTIONS_CONVENIENCE` (`true`/`false`: whether that
+category of the ETP exception list applies in every mode; unset keeps the ETP
+level's default, Strict: baseline only, Standard and Off: both), `MODE`
+(`investigate`, or `retest` to rerun with the ETP exception list off, the same
+as `EXCEPTIONS_BASELINE=false`), `MODEL`, `EFFORT`, `MAX_TURNS` and `HEADLESS`.
 
 In Docker, the way it ships (Firefox Nightly is downloaded at startup), from the
 repo root with secrets in `.env` (see [agents/README.md](../README.md)):

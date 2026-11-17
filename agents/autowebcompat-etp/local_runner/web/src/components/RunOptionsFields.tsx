@@ -6,6 +6,7 @@ import type { Effort, EtpLevel, RunOptions } from "../api";
 import {
   baselineConfig,
   configLabel,
+  defaultExceptions,
   EFFORTS,
   formatListVersion,
   formatTime,
@@ -39,6 +40,12 @@ export function RunOptionsFields({
   const etpName = useId();
   const modelList = useId();
   const modelName = models?.models.find((m) => m.id === snap.model);
+  // Unchanged checkboxes follow Firefox's default for the level; convenience
+  // needs baseline.
+  const [defaultBaseline, defaultConvenience] = defaultExceptions(snap.etp);
+  const baselineExceptions = snap.exceptions_baseline ?? defaultBaseline;
+  const convenienceExceptions =
+    baselineExceptions && (snap.exceptions_convenience ?? defaultConvenience);
 
   const maxTurns = (
     <div>
@@ -66,8 +73,11 @@ export function RunOptionsFields({
             checked={snap.etp === level}
             onChange={() => {
               options.etp = level;
-              // Retesting disables ETP's exceptions, which is moot without ETP.
-              if (level === "off") options.mode = "investigate";
+              // Without ETP there is nothing to except.
+              if (level === "off") {
+                options.exceptions_baseline = null;
+                options.exceptions_convenience = null;
+              }
             }}
           />
           {label}
@@ -125,6 +135,24 @@ export function RunOptionsFields({
         />
         Private Browsing Mode
       </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          disabled={snap.etp === "off"}
+          checked={baselineExceptions}
+          onChange={(e) => (options.exceptions_baseline = e.target.checked)}
+        />
+        Retest with baseline ETP exceptions
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          disabled={snap.etp === "off" || !baselineExceptions}
+          checked={convenienceExceptions}
+          onChange={(e) => (options.exceptions_convenience = e.target.checked)}
+        />
+        Retest with convenience ETP exceptions
+      </label>
       <div className="meta">
         Baseline (should work): {configLabel(baselineConfig(snap))}
       </div>
@@ -138,17 +166,6 @@ export function RunOptionsFields({
           Control run: no protections, so no fix is proposed.
         </div>
       )}
-      <label className="check">
-        <input
-          type="checkbox"
-          disabled={snap.etp === "off"}
-          checked={snap.mode === "retest"}
-          onChange={(e) =>
-            (options.mode = e.target.checked ? "retest" : "investigate")
-          }
-        />
-        Retest with ETP exceptions disabled
-      </label>
       <div className="row">
         <div>
           <label>Model</label>

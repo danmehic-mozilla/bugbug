@@ -1,4 +1,4 @@
-import type { EtpLevel, RunInfo } from "./api";
+import type { EtpLevel, Mode, RunInfo } from "./api";
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
@@ -40,11 +40,61 @@ export type ConfigParts = {
   easylist?: boolean;
   easyprivacy?: boolean;
   private?: boolean | null;
+  mode?: Mode | null;
+  exceptions_baseline?: boolean | null;
+  exceptions_convenience?: boolean | null;
 };
 
 /**
- * One line per part, e.g. ["ETP Standard", "+ EasyList", "+ Private Browsing
- * Mode"]; empty when the run recorded no target.
+ * Whether the baseline and convenience ETP exceptions apply by default, as in
+ * Firefox's ContentBlockingPrefs: Strict leaves out convenience.
+ */
+export function defaultExceptions(etp: EtpLevel): [boolean, boolean] {
+  return [true, etp !== "strict"];
+}
+
+/**
+ * Whether each ETP exception category applies, like the agent's
+ * effective_exceptions: null keeps the level's default, `retest` turns
+ * baseline off, and convenience needs baseline.
+ */
+export function appliedExceptions(config: ConfigParts): [boolean, boolean] {
+  const [baseline, convenience] = defaultExceptions(config.etp ?? "strict");
+  const applies =
+    config.mode !== "retest" && (config.exceptions_baseline ?? baseline);
+  return [applies, applies && (config.exceptions_convenience ?? convenience)];
+}
+
+/**
+ * The overrides the agent applies in every mode, like its
+ * exception_overrides: null where the level's default stays.
+ */
+export function exceptionOverrides(config: ConfigParts) {
+  const [baseline, convenience] = appliedExceptions(config);
+  const moot = !config.etp || config.etp === "off";
+  return {
+    exceptions_baseline: moot || baseline ? null : false,
+    exceptions_convenience:
+      moot || !baseline || convenience === defaultExceptions(config.etp!)[1]
+        ? null
+        : convenience,
+  };
+}
+
+/** How the ETP exceptions differ from the level's default, if they do. */
+function exceptionLines(config: ConfigParts): string[] {
+  if (!config.etp || config.etp === "off") return [];
+  const [baseline, convenience] = appliedExceptions(config);
+  if (!baseline) return ["baseline exceptions off"];
+  if (convenience === defaultExceptions(config.etp)[1]) return [];
+  return [
+    convenience ? "+ convenience exceptions" : "convenience exceptions off",
+  ];
+}
+
+/**
+ * One line per part, e.g. ["ETP Strict", "+ EasyList", "+ Private Browsing
+ * Mode", "+ convenience exceptions"]; empty when the run recorded no target.
  */
 export function configLines(config: ConfigParts): string[] {
   if (!config.etp) return [];
@@ -53,6 +103,7 @@ export function configLines(config: ConfigParts): string[] {
     ...(config.easylist ? ["+ EasyList"] : []),
     ...(config.easyprivacy ? ["+ EasyPrivacy"] : []),
     ...(config.private ? ["+ Private Browsing Mode"] : []),
+    ...exceptionLines(config),
   ];
 }
 
@@ -65,13 +116,14 @@ export function formatListVersion(version: string): string {
 /**
  * The configuration the agent compares a target against, where the site should
  * work: ETP Standard for a Strict target, else ETP Off without lists, in the
- * same kind of window.
+ * same kind of window and with the target's ETP exception overrides.
  */
 export function baselineConfig(target: ConfigParts): ConfigParts {
   if (!target.etp) return {};
   return {
     etp: target.etp === "strict" ? "standard" : "off",
     private: target.private,
+    ...exceptionOverrides(target),
   };
 }
 
