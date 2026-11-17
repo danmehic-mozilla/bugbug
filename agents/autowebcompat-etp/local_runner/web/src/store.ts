@@ -93,7 +93,6 @@ export interface StartState {
   bugId: string;
   bugData: string;
   options: RunOptions;
-  configs: TargetConfig[];
   busy: boolean;
   error: string | null;
 }
@@ -115,7 +114,6 @@ export const store = proxy({
     bugId: "",
     bugData: "",
     options: { ...DEFAULT_OPTIONS },
-    configs: [],
     busy: false,
     error: null,
   } as StartState,

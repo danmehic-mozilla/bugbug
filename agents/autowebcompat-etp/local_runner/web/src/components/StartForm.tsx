@@ -5,7 +5,6 @@ import { startRun } from "../actions";
 import { api, type EtpLevel, type ReportedConfig } from "../api";
 import { configLabel } from "../format";
 import { store } from "../store";
-import { ConfigsToCompare } from "./ConfigsToCompare";
 import { RunOptionsFields } from "./RunOptionsFields";
 
 /** e.g. "ETP Standard + Private Browsing Mode"; only the parts given. */
@@ -44,8 +43,7 @@ export function StartForm() {
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    // Compared configurations each set their own target.
-    if (reported && detected && !start.configs.length) {
+    if (reported && detected) {
       const { etp, private: isPrivate } = start.options;
       const etpDiffers = !!reported.etp && reported.etp !== etp;
       const privateDiffers =
@@ -103,7 +101,6 @@ export function StartForm() {
         />
       </details>
       <RunOptionsFields options={start.options} />
-      <ConfigsToCompare options={start.options} configs={start.configs} />
       {snap.error && <div className="note err">{snap.error}</div>}
       <button type="submit" className="wide" disabled={snap.busy}>
         Start run
