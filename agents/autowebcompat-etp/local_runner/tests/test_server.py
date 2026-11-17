@@ -471,3 +471,127 @@ def test_filter_lists_fetch_failure_keeps_cache(client, monkeypatch):
     )
     assert client.post("/api/filter-lists/fetch").status_code == 502
     assert (server.FILTER_LISTS_DIR / "easylist.txt").read_text() == EASYLIST
+
+
+# --- Bugzilla actions ----------------------------------------------------------
+
+
+@pytest.fixture
+def bugzilla_calls(monkeypatch):
+    calls = []
+
+    def fake(method, path, body=None, params=None, auth_required=True):
+        calls.append((method, path, body, params))
+        if method == "GET":
+            return {
+                "bugs": [
+                    {
+                        "whiteboard": "[old]",
+                        "cf_user_story": "",
+                        "severity": "--",
+                        "priority": "P3",
+                        "creator": "reporter@example.com",
+                    }
+                ]
+            }
+        return {}
+
+    monkeypatch.setattr(server, "bugzilla", fake)
+    return calls
+
+
+def test_apply_closes_and_needinfos(client, isolated, bugzilla_calls):
+    write_run(isolated, "etp-bug7-20261117-100000", {"bug_id": 7}, {})
+    response = client.post(
+        "/api/runs/etp-bug7-20261117-100000/apply",
+        json={
+            "bug_id": 7,
+            "comment": "Works now.",
+            "changes": {"severity": "S3"},
+            "resolution": "WORKSFORME",
+            "needinfo": "reporter@example.com",
+        },
+    )
+    assert response.status_code == 200
+    assert bugzilla_calls == [
+        (
+            "PUT",
+            "bug/7",
+            {
+                "severity": "S3",
+                "status": "RESOLVED",
+                "resolution": "WORKSFORME",
+                "flags": [
+                    {
+                        "name": "needinfo",
+                        "status": "?",
+                        "requestee": "reporter@example.com",
+                    }
+                ],
+                "comment": {"body": "Works now.", "is_markdown": True},
+            },
+            None,
+        )
+    ]
+
+
+def test_apply_without_close_or_needinfo(client, isolated, bugzilla_calls):
+    write_run(isolated, "etp-bug7-20261117-100000", {"bug_id": 7}, {})
+    response = client.post(
+        "/api/runs/etp-bug7-20261117-100000/apply",
+        json={"bug_id": 7, "changes": {"priority": "P2"}},
+    )
+    assert response.status_code == 200
+    assert bugzilla_calls == [("PUT", "bug/7", {"priority": "P2"}, None)]
+
+
+def test_apply_rejects_unknown_resolution(client, isolated, bugzilla_calls):
+    write_run(isolated, "etp-bug7-20261117-100000", {"bug_id": 7}, {})
+    response = client.post(
+        "/api/runs/etp-bug7-20261117-100000/apply",
+        json={"bug_id": 7, "resolution": "DUPLICATE"},
+    )
+    assert response.status_code == 422
+    assert bugzilla_calls == []
+
+
+@pytest.mark.parametrize(
+    ("failure_reason", "resolution", "close", "needinfo"),
+    [
+        ("not_reproducible", "WORKSFORME", True, True),
+        ("broken_in_baseline", "INVALID", True, False),
+        ("anti_adblock", "WONTFIX", False, False),
+        (None, None, False, False),
+    ],
+)
+def test_review_suggests_outcome_actions(
+    client, isolated, failure_reason, resolution, close, needinfo
+):
+    write_run(
+        isolated,
+        "etp-bug7-20261117-100000",
+        {"bug_id": 7},
+        {"failure_reason": failure_reason},
+    )
+    draft = client.get("/api/runs/etp-bug7-20261117-100000/review").json()["draft"]
+    assert (draft["resolution"], draft["close"], draft["needinfo"]) == (
+        resolution,
+        close,
+        needinfo,
+    )
+
+
+def test_bug_draft_loads_reporter_and_changes(client, isolated, bugzilla_calls):
+    write_run(
+        isolated,
+        "etp-bug7-20261117-100000",
+        {"bug_id": 7},
+        {"whiteboard_tags": ["[etp-tag]"], "severity": "S3", "priority": "P1"},
+    )
+    response = client.get("/api/runs/etp-bug7-20261117-100000/bug-draft")
+    assert response.status_code == 200
+    assert response.json() == {
+        "changes": {"severity": "S3", "whiteboard": "[old][etp-tag]"},
+        "reporter": "reporter@example.com",
+    }
+    assert [call[:2] for call in bugzilla_calls] == [("GET", "bug/7")]
