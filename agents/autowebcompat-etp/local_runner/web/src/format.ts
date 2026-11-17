@@ -56,6 +56,19 @@ export function configLines(config: ConfigParts): string[] {
   ];
 }
 
+/**
+ * The configuration the agent compares a target against, where the site should
+ * work: ETP Standard for a Strict target, else ETP Off without lists, in the
+ * same kind of window.
+ */
+export function baselineConfig(target: ConfigParts): ConfigParts {
+  if (!target.etp) return {};
+  return {
+    etp: target.etp === "strict" ? "standard" : "off",
+    private: target.private,
+  };
+}
+
 /** The same on one line, e.g. "ETP Standard + EasyList + Private Browsing Mode". */
 export function configLabel(config: ConfigParts): string {
   return configLines(config).join(" ");

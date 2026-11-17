@@ -2,7 +2,7 @@ import { useSnapshot } from "valtio";
 
 import { closeCompare, selectRun } from "../actions";
 import { api, type CompareRow, type FilterList } from "../api";
-import { formatCost } from "../format";
+import { baselineConfig, configLabel, formatCost } from "../format";
 import { store } from "../store";
 import { ConfigLabel } from "./ConfigLabel";
 import { StatusBadge } from "./StatusBadge";
@@ -61,14 +61,28 @@ export function CompareView() {
         <table className="bugs">
           <thead>
             <tr>
-              <th>Configuration</th>
-              <th>Baseline</th>
-              <th>Target</th>
-              <th>Target without lists</th>
-              <th>Blocked trackers</th>
-              <th>List versions</th>
+              <th title="The target configuration the run tested">
+                Configuration
+              </th>
+              <th title="Where the site should work: ETP Standard for a Strict target, else ETP Off without lists">
+                Baseline
+              </th>
+              <th title="Whether the reported breakage happens in the target configuration">
+                Target
+              </th>
+              <th title="Only for a broken target with filter lists: the same ETP level without them. Works means the lists alone cause it">
+                Target without lists
+              </th>
+              <th title="Trackers Firefox blocked at each screenshot">
+                Blocked trackers
+              </th>
+              <th title="The EasyList / EasyPrivacy versions loaded">
+                List versions
+              </th>
               <th>Screenshots</th>
-              <th>Status / cost</th>
+              <th title="ok means the run finished, not that the site works">
+                Status / cost
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -92,6 +106,11 @@ export function CompareView() {
                     <Verdict value={row.broken_in_baseline} />
                   ) : (
                     <span className="meta">—</span>
+                  )}
+                  {configLabel(baselineConfig(rowConfig(row))) && (
+                    <div className="meta">
+                      {configLabel(baselineConfig(rowConfig(row)))}
+                    </div>
                   )}
                 </td>
                 <td>

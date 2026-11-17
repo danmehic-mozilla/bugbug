@@ -2,7 +2,7 @@ import { useId } from "react";
 import { useSnapshot } from "valtio";
 
 import type { Effort, EtpLevel, RunOptions } from "../api";
-import { EFFORTS } from "../format";
+import { baselineConfig, configLabel, EFFORTS } from "../format";
 import { store } from "../store";
 
 interface Props {
@@ -87,6 +87,9 @@ export function RunOptionsFields({
         />
         Private Browsing Mode
       </label>
+      <div className="meta">
+        Baseline (should work): {configLabel(baselineConfig(snap))}
+      </div>
       {snap.etp === "standard" && !snap.private && (
         <div className="note">
           Standard blocks trackers only in Private Browsing Mode.
