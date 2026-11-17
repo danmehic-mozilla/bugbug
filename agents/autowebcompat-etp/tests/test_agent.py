@@ -1,11 +1,14 @@
+import json
 from unittest import mock
 
 import requests
 from autowebcompat_tools.inputs import BugDataInput, BugIdInput
+from autowebcompat_tools.task import RunTracker, TaskConfig
 from hackbot_agents.autowebcompat_etp import agent, mcp_servers
 from hackbot_agents.autowebcompat_etp.result import (
     PNG_SIGNATURE,
     EtpInvestigationResult,
+    EtpListsTargetResult,
     ProposedShim,
 )
 
@@ -14,10 +17,9 @@ def make_result(*proposals):
     return EtpInvestigationResult(
         summary="",
         failure_reason=None,
-        broken_in_standard=False,
-        broken_in_strict=True,
-        broken_with_easyprivacy=None,
-        broken_with_easylist=None,
+        broken_in_baseline=False,
+        broken_in_target=True,
+        broken_without_lists=None,
         culprit_prefs=[],
         blocked_resources=[],
         proposed_exceptions=list(proposals),
@@ -102,10 +104,8 @@ def test_publish_screenshots(tmp_path):
     png.write_bytes(PNG_SIGNATURE)
     result = make_result(GLOBAL).model_copy(
         update={
-            "screenshot_standard": png,
-            "screenshot_strict": png,
-            "screenshot_easyprivacy": png,
-            "screenshot_easylist": png,
+            "screenshot_baseline": png,
+            "screenshot_target": png,
         }
     )
     publish_file = mock.Mock(side_effect=lambda key, path, _: f"https://x/{key}")
@@ -113,12 +113,10 @@ def test_publish_screenshots(tmp_path):
     urls = agent.publish_screenshots(result, publish_file)
 
     assert urls == {
-        "standard": "https://x/screenshot-standard.png",
-        "strict": "https://x/screenshot-strict.png",
-        "easyprivacy": "https://x/screenshot-easyprivacy.png",
-        "easylist": "https://x/screenshot-easylist.png",
+        "baseline": "https://x/screenshot-baseline.png",
+        "target": "https://x/screenshot-target.png",
     }
-    publish_file.assert_any_call("screenshot-strict.png", png, "image/png")
+    publish_file.assert_any_call("screenshot-target.png", png, "image/png")
 
 
 def test_publish_content_blocking_log(tmp_path):
@@ -196,7 +194,7 @@ def test_final_result_keeps_counts_without_paths(tmp_path):
     png.write_bytes(PNG_SIGNATURE)
     result = EtpInvestigationResult.model_validate(
         make_result(GLOBAL).model_dump()
-        | {"screenshot_strict": png, "blocked_trackers": {"strict": 38}}
+        | {"screenshot_target": png, "blocked_trackers": {"target": 38}}
     )
 
     # As run_autowebcompat_etp builds it, with the paths replaced by URLs.
@@ -207,10 +205,10 @@ def test_final_result_keeps_counts_without_paths(tmp_path):
         user_story_lines=[],
         existing_exceptions=None,
         existing_shims=None,
-        screenshot_urls={"strict": "https://x/screenshot-strict.png"},
+        screenshot_urls={"target": "https://x/screenshot-target.png"},
     )
 
-    assert final.blocked_trackers.strict == 38
+    assert final.blocked_trackers.target == 38
 
 
 SHIMS_JS = """
@@ -313,3 +311,130 @@ def test_shims_fetch_failure_returns_none():
         agent.requests, "get", side_effect=requests.ConnectionError()
     ):
         assert agent.find_existing_shims(make_shim()) is None
+
+
+def make_investigation(tmp_path, etp, filter_lists=(), private=False):
+    with mock.patch.object(agent, "build_firefox_devtools_server"):
+        return agent.EtpInvestigation(
+            TaskConfig(),
+            RunTracker(),
+            tmp_path / "firefox",
+            BugIdInput(bug_id=1),
+            {"type": "http", "url": "http://broker/mcp"},
+            tmp_path,
+            etp=etp,
+            filter_lists=filter_lists,
+            private=private,
+        )
+
+
+def test_user_prompt_strict_target_has_standard_baseline(tmp_path):
+    prompt = make_investigation(tmp_path, "strict").user_prompt()
+    assert (
+        'Target configuration: Strict ETP. Call `set_etp_mode` with {"etp": "strict"}.'
+        in prompt
+    )
+    assert (
+        'Baseline configuration: Standard ETP. Call `set_etp_mode` with {"etp": "standard"}.'
+        in prompt
+    )
+    assert "control run" not in prompt
+    for stage in ("baseline", "target", "fixed"):
+        assert str(tmp_path / f"{stage}.png") in prompt
+
+
+def test_user_prompt_layers_filter_lists_with_off_baseline(tmp_path):
+    prompt = make_investigation(
+        tmp_path, "standard", ("easylist", "easyprivacy")
+    ).user_prompt()
+    assert (
+        "Target configuration: Standard ETP + EasyList + EasyPrivacy. Call "
+        '`set_etp_mode` with {"etp": "standard", "filter_lists": ["easylist", '
+        '"easyprivacy"]}.'
+    ) in prompt
+    assert (
+        'Baseline configuration: ETP off. Call `set_etp_mode` with {"etp": "off"}.'
+        in prompt
+    )
+
+
+def test_user_prompt_off_without_lists_is_a_control_run(tmp_path):
+    assert "control run" in make_investigation(tmp_path, "off").user_prompt()
+    assert (
+        "control run"
+        not in make_investigation(tmp_path, "off", ("easylist",)).user_prompt()
+    )
+
+
+def test_firefox_devtools_server_private(tmp_path, monkeypatch):
+    monkeypatch.setattr(mcp_servers, "resolve_bin", lambda name: name)
+    server = mcp_servers.build_firefox_devtools_server(tmp_path)
+    assert "ETP_PRIVATE" not in server["env"]
+    server = mcp_servers.build_firefox_devtools_server(tmp_path, private=True)
+    assert server["env"]["ETP_PRIVATE"] == "1"
+
+
+def test_private_run_prompts(tmp_path):
+    normal = make_investigation(tmp_path, "standard")
+    assert agent.PRIVATE_NOTE not in normal.user_prompt()
+    assert "normal (not private) window" in normal.user_prompt()
+    system = normal.system_prompt()
+    assert agent.PRIVATE_BROWSING_MARKER not in system
+    assert agent.PRIVATE_BROWSING_NORMAL in system
+
+    private = make_investigation(tmp_path, "standard", private=True)
+    assert agent.PRIVATE_NOTE in private.user_prompt()
+    system = private.system_prompt()
+    assert agent.PRIVATE_BROWSING_MARKER not in system
+    assert agent.PRIVATE_BROWSING_NORMAL not in system
+    assert agent.PRIVATE_BROWSING_PRIVATE in system
+
+
+def test_result_class_follows_the_target_lists(tmp_path):
+    assert make_investigation(tmp_path, "strict").result_cls is EtpInvestigationResult
+    investigation = make_investigation(tmp_path, "strict", ("easylist",))
+    assert investigation.result_cls is EtpListsTargetResult
+    assert investigation.result_collector.result_cls is EtpListsTargetResult
+
+
+def test_read_filter_list_versions(tmp_path):
+    path = tmp_path / "log.json"
+    assert agent.read_filter_list_versions(path, ("easylist",)) is None
+    path.write_text(
+        json.dumps(
+            {
+                "strict+easylist": [],
+                "filterListVersions": {
+                    "easylist": "202611171704",
+                    "easyprivacy": None,
+                },
+            }
+        )
+    )
+    assert agent.read_filter_list_versions(path, ()) is None
+    assert agent.read_filter_list_versions(path, ("easylist", "easyprivacy")) == {
+        "easylist": "202611171704"
+    }
+    assert agent.read_filter_list_versions(path, ("easyprivacy",)) is None
+    path.write_text("[]")
+    assert agent.read_filter_list_versions(path, ("easylist",)) is None
+
+
+def test_final_result_skips_list_check(tmp_path):
+    result = EtpListsTargetResult.model_validate(
+        make_result(GLOBAL).model_dump() | {"broken_without_lists": True}
+    )
+    final = agent.AutowebcompatEtpResult(
+        **result.model_dump(exclude=set(agent.SCREENSHOT_FIELDS.values())),
+        exception_records=[],
+        whiteboard_tags=[],
+        user_story_lines=[],
+        existing_exceptions=None,
+        existing_shims=None,
+        screenshot_urls={},
+        filter_lists=["easylist"],
+        private=True,
+        filter_list_versions={"easylist": "202611171704"},
+    )
+    assert final.broken_without_lists is True
+    assert final.private is True

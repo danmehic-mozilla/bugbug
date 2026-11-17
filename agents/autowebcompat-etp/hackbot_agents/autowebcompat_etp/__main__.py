@@ -11,7 +11,13 @@ from hackbot_runtime import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .agent import AutowebcompatEtpResult, Mode, run_autowebcompat_etp
+from .agent import (
+    FILTER_LISTS,
+    AutowebcompatEtpResult,
+    EtpLevel,
+    Mode,
+    run_autowebcompat_etp,
+)
 
 logger = logging.getLogger("autowebcompat-etp")
 
@@ -33,6 +39,12 @@ class AgentInputs(BaseSettings):
     headless: bool = False
     # `retest` reruns an old bug with Firefox's ETP exceptions turned off.
     mode: Mode = "investigate"
+    # The target configuration: an ETP category plus any filter lists.
+    etp: EtpLevel = "strict"
+    easylist: bool = False
+    easyprivacy: bool = False
+    # Test target and baseline in a Private Browsing window.
+    private: bool = False
 
     model_config = SettingsConfigDict(extra="ignore")
 
@@ -76,6 +88,9 @@ async def main(ctx: HackbotContext) -> AutowebcompatResult:
         },
         publish_file=ctx.publish_file,
         mode=inputs.mode,
+        etp=inputs.etp,
+        filter_lists=tuple(name for name in FILTER_LISTS if getattr(inputs, name)),
+        private=inputs.private,
     )
     end_time = datetime.now()
 

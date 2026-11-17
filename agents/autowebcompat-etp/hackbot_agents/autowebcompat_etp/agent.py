@@ -7,10 +7,11 @@ Remote Settings collection. The bug is passed either inline as ``bug_data``
 text or a Bugzilla ``bug_id`` (read via Bugzilla broker).
 """
 
+import json
 import logging
 import re
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal, get_args
 
@@ -37,6 +38,7 @@ from .result import (
     RESULT_SERVER_NAME,
     ClassifierFeature,
     EtpInvestigationResult,
+    EtpListsTargetResult,
     ProposedShim,
 )
 from .tracker_lists import (
@@ -61,6 +63,40 @@ PublishFile = Callable[[str, Path, str | None], str]
 # still breaks without the exceptions it may already have.
 Mode = Literal["investigate", "retest"]
 
+# The configuration the agent investigates (the target): an ETP category plus
+# any filter lists, all blocking at once. Its baseline is Standard for a Strict
+# target, else ETP off with no lists.
+EtpLevel = Literal["off", "standard", "strict"]
+FilterList = Literal["easylist", "easyprivacy"]
+FILTER_LISTS: tuple[FilterList, ...] = ("easylist", "easyprivacy")
+FILTER_LIST_NAMES = {"easylist": "EasyList", "easyprivacy": "EasyPrivacy"}
+ETP_NAMES = {"off": "ETP off", "standard": "Standard ETP", "strict": "Strict ETP"}
+
+
+def baseline_etp(etp: EtpLevel) -> EtpLevel:
+    return "standard" if etp == "strict" else "off"
+
+
+def describe_config(etp: EtpLevel, filter_lists: Sequence[FilterList] = ()) -> str:
+    """E.g. "Strict ETP + EasyList + EasyPrivacy"."""
+    return " + ".join(
+        [ETP_NAMES[etp], *(FILTER_LIST_NAMES[name] for name in filter_lists)]
+    )
+
+
+def set_etp_mode_args(etp: EtpLevel, filter_lists: Sequence[FilterList] = ()) -> str:
+    args: dict[str, Any] = {"etp": etp}
+    if filter_lists:
+        args["filter_lists"] = list(filter_lists)
+    return json.dumps(args)
+
+
+CONTROL_NOTE = """This is a control run: the target blocks nothing. Load the page in the target
+configuration, follow the steps, take the target screenshot and read the
+content blocking log, then submit: `not_reproducible` if the site works,
+`not_etp` if it breaks (with nothing blocked, blocking can't cause it). Leave
+the baseline fields null and propose no fix."""
+
 RETEST_NOTE = """\
 This is a retest of an older report. In this Firefox, the ETP exception list is
 disabled in every mode (`set_etp_mode` keeps it off; don't change the
@@ -72,16 +108,34 @@ whether the breakage still happens without them (they are still needed) or not
 (the site no longer needs them). In step 3, an existing exception cannot explain
 a site that works here."""
 
+PRIVATE_NOTE = """\
+This is a Private Browsing run: test the baseline and the target in a private
+window. Every `set_etp_mode` call closes the private window and opens a fresh
+one, whose tab becomes the selected page; load the URL there with
+`navigate_page` and don't select another page. `get_content_blocking_log` says
+"(private window)" when it reads that tab."""
+
+# Where the system prompt says how to test Private Browsing reports.
+PRIVATE_BROWSING_MARKER = "<!-- private-browsing -->"
+PRIVATE_BROWSING_NORMAL = """\
+Private Browsing windows block trackers even in Standard mode, so a report that
+says "broken in Private Browsing" is usually the same tracker blocking that
+Strict mode does in normal windows: test it in the target configuration in a
+normal window."""
+PRIVATE_BROWSING_PRIVATE = """\
+Private Browsing windows block trackers even in Standard mode. This run tests
+every configuration in a private window (see the user message), so test the
+target configuration as given, also for reports about Private Browsing."""
+
 # Screenshot stage -> result field holding the path the agent saved it to.
 SCREENSHOT_FIELDS = {
-    "standard": "screenshot_standard",
-    "strict": "screenshot_strict",
-    "easyprivacy": "screenshot_easyprivacy",
-    "easylist": "screenshot_easylist",
+    "baseline": "screenshot_baseline",
+    "target": "screenshot_target",
     "fixed": "screenshot_fixed",
 }
 
-# Where get_content_blocking_log records every log it returns, by ETP mode.
+# Where get_content_blocking_log records every log it returns, by ETP mode,
+# and set_etp_mode the versions of the filter lists it loaded.
 CONTENT_BLOCKING_LOG_FILE = "content-blocking-log.json"
 
 
@@ -94,11 +148,21 @@ class AutowebcompatEtpResult(EtpInvestigationResult):
     screenshot_urls: dict[str, str]
     content_blocking_log_url: str | None = None
     mode: Mode = "investigate"
+    etp: EtpLevel = "strict"
+    filter_lists: list[FilterList] = []
+    private: bool = False
+    # The `! Version:` header of each filter list set_etp_mode loaded, by list.
+    filter_list_versions: dict[str, str] | None = None
 
     @model_validator(mode="after")
     def validate_blocked_trackers_have_screenshots(self) -> AutowebcompatEtpResult:
         # The screenshot paths are left out here, and the agent's submission
         # was already checked against them.
+        return self
+
+    @model_validator(mode="after")
+    def validate_broken_without_lists(self) -> AutowebcompatEtpResult:
+        # Checked against the target when the agent submitted it.
         return self
 
 
@@ -117,10 +181,21 @@ class EtpInvestigation(Task[EtpInvestigationResult]):
         screenshot_dir: Path,
         content_blocking_log_file: Path | None = None,
         mode: Mode = "investigate",
+        etp: EtpLevel = "strict",
+        filter_lists: tuple[FilterList, ...] = (),
+        private: bool = False,
     ):
+        # The submission is validated against the target: with filter lists,
+        # broken_without_lists is required when it breaks.
+        self.result_cls = (
+            EtpListsTargetResult if filter_lists else EtpInvestigationResult
+        )
         super().__init__(task_config, run_tracker)
         self.input_data = input_data
         self.mode = mode
+        self.etp = etp
+        self.filter_lists = filter_lists
+        self.private = private
         self.screenshot_paths = {
             stage: screenshot_dir / f"{stage}.png" for stage in SCREENSHOT_FIELDS
         }
@@ -131,6 +206,7 @@ class EtpInvestigation(Task[EtpInvestigationResult]):
                 headless=task_config.headless,
                 content_blocking_log_file=content_blocking_log_file,
                 disable_exceptions=mode == "retest",
+                private=private,
             ),
             DEVTOOLS_TOOLS + PRIVILEGED_TOOLS,
         )
@@ -149,7 +225,14 @@ class EtpInvestigation(Task[EtpInvestigationResult]):
         return self.input_data.subject()
 
     def system_prompt(self) -> str:
-        return (HERE / "prompts" / "system.md").read_text()
+        return (
+            (HERE / "prompts" / "system.md")
+            .read_text()
+            .replace(
+                PRIVATE_BROWSING_MARKER,
+                PRIVATE_BROWSING_PRIVATE if self.private else PRIVATE_BROWSING_NORMAL,
+            )
+        )
 
     def user_prompt(self) -> str:
         if isinstance(self.input_data, BugDataInput):
@@ -165,15 +248,28 @@ class EtpInvestigation(Task[EtpInvestigationResult]):
             )
         if self.mode == "retest":
             report = f"{report}\n\n{RETEST_NOTE}"
+        target = describe_config(self.etp, self.filter_lists)
+        baseline = baseline_etp(self.etp)
+        report += (
+            f"\n\nTarget configuration: {target}. Call `set_etp_mode` with "
+            f"{set_etp_mode_args(self.etp, self.filter_lists)}.\n"
+            f"Baseline configuration: {describe_config(baseline)}. Call "
+            f"`set_etp_mode` with {set_etp_mode_args(baseline)}."
+        )
+        report += (
+            f"\n\n{PRIVATE_NOTE}"
+            if self.private
+            else "\n\nThis run tests in a normal (not private) window."
+        )
+        if self.etp == "off" and not self.filter_lists:
+            report += f"\n\n{CONTROL_NOTE}"
         paths = self.screenshot_paths
         return (
             f"{report}\n\n"
             "Screenshot paths (pass these exactly as `saveTo`):\n"
-            f"- Standard mode: {paths['standard']}\n"
-            f"- Strict mode: {paths['strict']}\n"
-            f"- Strict mode with the EasyPrivacy list: {paths['easyprivacy']}\n"
-            f"- Strict mode with EasyList and EasyPrivacy: {paths['easylist']}\n"
-            f"- Strict mode with the fix: {paths['fixed']}"
+            f"- Baseline: {paths['baseline']}\n"
+            f"- Target: {paths['target']}\n"
+            f"- Target with the fix: {paths['fixed']}"
         )
 
 
@@ -321,6 +417,27 @@ def publish_screenshots(
     return urls
 
 
+def read_filter_list_versions(
+    path: Path, filter_lists: Sequence[FilterList]
+) -> dict[str, str] | None:
+    """The versions of `filter_lists` set_etp_mode recorded in the log file.
+
+    None if there are no lists, or set_etp_mode never read their versions.
+    """
+    try:
+        versions = json.loads(path.read_text()).get("filterListVersions")
+    except OSError, ValueError, AttributeError:
+        return None
+    if not isinstance(versions, dict):
+        return None
+    known = {
+        name: version
+        for name, version in versions.items()
+        if name in filter_lists and isinstance(version, str)
+    }
+    return known or None
+
+
 def publish_content_blocking_log(path: Path, publish_file: PublishFile) -> str | None:
     """Publish the content blocking logs the MCP server recorded, if any."""
     if not path.is_file():
@@ -335,10 +452,14 @@ async def run_autowebcompat_etp(
     bugzilla_mcp_server: McpServerConfig,
     publish_file: PublishFile,
     mode: Mode = "investigate",
+    etp: EtpLevel = "strict",
+    filter_lists: tuple[FilterList, ...] = (),
+    private: bool = False,
 ) -> AutowebcompatEtpResult:
     """Investigate an ETP breakage report and return the proposed fix.
 
-    In `retest` mode, Firefox runs with the ETP exception list turned off.
+    In `retest` mode, Firefox runs with the ETP exception list turned off. With
+    `private`, every configuration is tested in a private window.
 
     Raises :class:`AgentError` if the agent ends in an error.
     """
@@ -359,6 +480,9 @@ async def run_autowebcompat_etp(
             screenshot_dir,
             content_blocking_log_file,
             mode,
+            etp,
+            filter_lists,
+            private,
         ).run()
 
     records = exception_records(result, input_data)
@@ -376,4 +500,10 @@ async def run_autowebcompat_etp(
             content_blocking_log_file, publish_file
         ),
         mode=mode,
+        etp=etp,
+        filter_lists=list(filter_lists),
+        private=private,
+        filter_list_versions=read_filter_list_versions(
+            content_blocking_log_file, filter_lists
+        ),
     )

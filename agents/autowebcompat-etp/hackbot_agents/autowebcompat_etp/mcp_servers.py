@@ -45,6 +45,7 @@ def build_firefox_devtools_server(
     headless: bool = True,
     content_blocking_log_file: Path | None = None,
     disable_exceptions: bool = False,
+    private: bool = False,
 ) -> McpStdioServerConfig:
     """Build the stdio config for the Firefox DevTools MCP server.
 
@@ -60,6 +61,9 @@ def build_firefox_devtools_server(
     If ``disable_exceptions`` is set, Firefox starts with the ETP exception
     list off, and ``set_etp_mode`` turns it off again after every switch, since
     switching the category resets it.
+
+    If ``private`` is set, every ``set_etp_mode`` closes the private window it
+    opened before and opens a fresh one, whose tab becomes the selected page.
     """
     args = [
         "--enable-script",
@@ -80,6 +84,8 @@ def build_firefox_devtools_server(
     env = {"MOZ_REMOTE_ALLOW_SYSTEM_ACCESS": "1"}
     if disable_exceptions:
         env["ETP_DISABLE_EXCEPTIONS"] = "1"
+    if private:
+        env["ETP_PRIVATE"] = "1"
     if content_blocking_log_file is not None:
         env["ETP_CONTENT_BLOCKING_LOG_FILE"] = str(content_blocking_log_file)
 
