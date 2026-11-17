@@ -373,3 +373,60 @@ img.thumb {
   border: 1px solid var(--border, #ccc);
   vertical-align: top;
 }
+.path {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+}
+.verdict {
+  display: inline-block;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.verdict.broken {
+  color: var(--err);
+  background: #fdecea;
+}
+.verdict.works {
+  color: var(--ok);
+  background: #e6f4ea;
+}
+.verdict.untested {
+  color: var(--muted);
+  background: #f0f0f2;
+  font-weight: 400;
+}
+.chip {
+  display: inline-block;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+  background: #f0f0f2;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin: 0 4px 4px 0;
+}
+.chip b {
+  color: var(--fg);
+}
+.thumbs {
+  display: flex;
+  gap: 6px;
+}
+.thumbs a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-decoration: none;
+}
+button.toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}

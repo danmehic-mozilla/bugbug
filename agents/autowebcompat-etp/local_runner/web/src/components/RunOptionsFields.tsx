@@ -2,7 +2,7 @@ import { useId } from "react";
 import { useSnapshot } from "valtio";
 
 import type { Effort, EtpLevel, RunOptions } from "../api";
-import { EFFORTS } from "../format";
+import { baselineConfig, configLabel, EFFORTS } from "../format";
 import { store } from "../store";
 
 interface Props {
@@ -13,7 +13,7 @@ interface Props {
 }
 
 const ETP_LEVELS: [EtpLevel, string][] = [
-  ["off", "ETP off"],
+  ["off", "ETP Off"],
   ["standard", "ETP Standard"],
   ["strict", "ETP Strict"],
 ];
@@ -85,11 +85,14 @@ export function RunOptionsFields({
           checked={snap.private}
           onChange={(e) => (options.private = e.target.checked)}
         />
-        Private window
+        Private Browsing Mode
       </label>
+      <div className="meta">
+        Baseline (should work): {configLabel(baselineConfig(snap))}
+      </div>
       {snap.etp === "standard" && !snap.private && (
         <div className="note">
-          Standard blocks trackers only in private windows.
+          Standard blocks trackers only in Private Browsing Mode.
         </div>
       )}
       {snap.etp === "off" && !snap.easylist && !snap.easyprivacy && (
@@ -152,7 +155,10 @@ export function RunOptionsFields({
               checked={native}
               onChange={() => (options.native = true)}
             />
-            Local build <span className="mono">{localFirefox}</span>
+            <span>
+              Local build
+              <span className="mono path">{localFirefox}</span>
+            </span>
           </label>
           <label className="check">
             <input

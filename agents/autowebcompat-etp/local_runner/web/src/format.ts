@@ -30,23 +30,46 @@ export function isActive(run: RunInfo): boolean {
 }
 
 const ETP_LABELS: Record<EtpLevel, string> = {
-  off: "ETP off",
-  standard: "Standard",
-  strict: "Strict",
+  off: "ETP Off",
+  standard: "ETP Standard",
+  strict: "ETP Strict",
 };
 
-/** E.g. "Strict + EasyList · private"; empty when the run recorded no target. */
-export function configLabel(config: {
+type ConfigParts = {
   etp?: EtpLevel | null;
   easylist?: boolean;
   easyprivacy?: boolean;
   private?: boolean | null;
-}): string {
-  if (!config.etp) return "";
-  const parts = [
+};
+
+/**
+ * One line per part, e.g. ["ETP Standard", "+ EasyList", "+ Private Browsing
+ * Mode"]; empty when the run recorded no target.
+ */
+export function configLines(config: ConfigParts): string[] {
+  if (!config.etp) return [];
+  return [
     ETP_LABELS[config.etp],
-    ...(config.easylist ? ["EasyList"] : []),
-    ...(config.easyprivacy ? ["EasyPrivacy"] : []),
+    ...(config.easylist ? ["+ EasyList"] : []),
+    ...(config.easyprivacy ? ["+ EasyPrivacy"] : []),
+    ...(config.private ? ["+ Private Browsing Mode"] : []),
   ];
-  return parts.join(" + ") + (config.private ? " · private" : "");
+}
+
+/**
+ * The configuration the agent compares a target against, where the site should
+ * work: ETP Standard for a Strict target, else ETP Off without lists, in the
+ * same kind of window.
+ */
+export function baselineConfig(target: ConfigParts): ConfigParts {
+  if (!target.etp) return {};
+  return {
+    etp: target.etp === "strict" ? "standard" : "off",
+    private: target.private,
+  };
+}
+
+/** The same on one line, e.g. "ETP Standard + EasyList + Private Browsing Mode". */
+export function configLabel(config: ConfigParts): string {
+  return configLines(config).join(" ");
 }

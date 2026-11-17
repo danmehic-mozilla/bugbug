@@ -3,6 +3,7 @@ import { useSnapshot } from "valtio";
 import { addConfig } from "../actions";
 import type { RunOptions, TargetConfig } from "../api";
 import { configLabel } from "../format";
+import { ConfigLabel } from "./ConfigLabel";
 
 interface Props {
   options: RunOptions;
@@ -20,7 +21,7 @@ export function ConfigsToCompare({ options, configs }: Props) {
       <label>Compare configurations</label>
       {snap.map((config, i) => (
         <div key={configLabel(config)} className="check">
-          {configLabel(config)}
+          <ConfigLabel config={config} />
           <button
             type="button"
             className="secondary"

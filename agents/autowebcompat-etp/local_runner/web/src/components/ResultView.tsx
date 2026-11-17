@@ -5,9 +5,9 @@ import { brokenLabel, formatCost } from "../format";
 import { store } from "../store";
 
 const ETP_NAMES = {
-  off: "ETP off",
-  standard: "Standard ETP",
-  strict: "Strict ETP",
+  off: "ETP Off",
+  standard: "ETP Standard",
+  strict: "ETP Strict",
 };
 const FILTER_LIST_NAMES = { easylist: "EasyList", easyprivacy: "EasyPrivacy" };
 
@@ -102,7 +102,7 @@ export function ResultView() {
           )}
           {result.private != null && (
             <>
-              <dt>Private window</dt>
+              <dt>Private Browsing Mode</dt>
               <dd>{result.private ? "yes" : "no"}</dd>
             </>
           )}
