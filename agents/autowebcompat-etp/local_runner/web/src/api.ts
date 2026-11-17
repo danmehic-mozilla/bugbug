@@ -273,6 +273,13 @@ export interface ApplyRequest {
   force: boolean;
 }
 
+/** The target configuration a bug's summary names; null where it names none. */
+export interface ReportedConfig {
+  summary: string;
+  etp: EtpLevel | null;
+  private: boolean | null;
+}
+
 export interface WhoAmI {
   name: string;
   real_name?: string;
@@ -320,6 +327,8 @@ export const api = {
   apply: (runId: string, body: ApplyRequest) =>
     post<Applied>(`${runPath(runId)}/apply`, body),
   bugs: (query: BugQuery) => request<ListedBug[]>(`/api/bugs/${query}`),
+  reportedConfig: (bugId: number) =>
+    request<ReportedConfig>(`/api/bugs/${bugId}/reported-config`),
   streamUrl: (runId: string) => `${runPath(runId)}/stream`,
   fileUrl: (runId: string, key: string) => `${runPath(runId)}/files/${key}`,
 };

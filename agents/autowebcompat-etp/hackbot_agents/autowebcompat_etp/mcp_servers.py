@@ -91,8 +91,15 @@ def build_firefox_devtools_server(
         args.append("--headless")
     if os.environ.get("LOCAL_FIREFOX"):
         # A native run shares the host's network settings; a system proxy or
-        # PAC file there (e.g. a local blocker) would break test sites.
-        args += ["--pref", "network.proxy.type=0"]
+        # PAC file there (e.g. a local blocker) would break test sites. A
+        # local build also trusts the OS's root certificates, as the host's
+        # browsers and curl do.
+        args += [
+            "--pref",
+            "network.proxy.type=0",
+            "--pref",
+            "security.enterprise_roots.enabled=true",
+        ]
 
     env = {"MOZ_REMOTE_ALLOW_SYSTEM_ACCESS": "1"}
     for category, value in overrides.items():

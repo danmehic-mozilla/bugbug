@@ -162,6 +162,20 @@ BUG_QUERIES = {
 }
 META_SUMMARY_RE = re.compile(r"\[meta\]", re.IGNORECASE)
 
+# Phrases in a bug summary that name the reported configuration, e.g.
+# "Broken design with Standard ETP in PBM".
+REPORTED_ETP_RE = re.compile(
+    r"\b(?:(standard|strict)\s+(?:etp|mode)|etp\s+(standard|strict))\b",
+    re.IGNORECASE,
+)
+REPORTED_PRIVATE_RE = re.compile(
+    r"\b(?:pbm|private\s+browsing|private\s+window)\b", re.IGNORECASE
+)
+# How long a fetched bug summary is reused for the start form's suggestion.
+SUMMARY_TTL = 300
+# bug ID -> (fetched at, summary).
+SUMMARY_CACHE: dict[int, tuple[float, str]] = {}
+
 # The Reporter header the agent log starts with when the input is a bug ID.
 LOG_SUBJECT_RE = re.compile(r"^# bug (\d+)$", re.MULTILINE)
 # Run IDs from this runner (etp-bug<id>-...) and from manual compose runs
@@ -807,6 +821,29 @@ def bugzilla(
     return response.json()
 
 
+def reported_config(summary: str) -> dict[str, Any]:
+    """The ETP level and private mode a bug summary names, None where it names none."""
+    etp = None
+    if match := REPORTED_ETP_RE.search(summary):
+        etp = (match.group(1) or match.group(2)).lower()
+    private = True if REPORTED_PRIVATE_RE.search(summary) else None
+    return {"etp": etp, "private": private}
+
+
+def bug_summary(bug_id: int) -> str:
+    if cached := SUMMARY_CACHE.get(bug_id):
+        if time.time() - cached[0] < SUMMARY_TTL:
+            return cached[1]
+    data = bugzilla(
+        "GET", f"bug/{bug_id}", params={"include_fields": "summary"}, auth_required=False
+    )
+    if not data.get("bugs"):
+        raise HTTPException(404, f"no bug {bug_id}")
+    summary = data["bugs"][0]["summary"]
+    SUMMARY_CACHE[bug_id] = (time.time(), summary)
+    return summary
+
+
 # --- routes ------------------------------------------------------------------
 
 
@@ -893,6 +930,13 @@ def bug_list(query: str) -> list[dict[str, Any]]:
         if not META_SUMMARY_RE.search(bug["summary"])
     ]
     return sorted(bugs, key=lambda bug: bug[sort_key], reverse=True)
+
+
+@app.get("/api/bugs/{bug_id}/reported-config")
+def bug_reported_config(bug_id: int) -> dict[str, Any]:
+    """The target configuration the bug's summary names, to suggest in the start form."""
+    summary = bug_summary(bug_id)
+    return {"summary": summary} | reported_config(summary)
 
 
 @app.get("/api/whoami")

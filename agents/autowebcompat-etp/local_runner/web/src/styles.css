@@ -132,6 +132,11 @@ button:disabled {
   color: var(--muted);
   font-size: 12px;
 }
+.summary-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .badge {
   display: inline-block;
   font-size: 11px;
