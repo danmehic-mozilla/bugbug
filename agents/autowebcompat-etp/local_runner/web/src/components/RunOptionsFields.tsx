@@ -90,25 +90,21 @@ export function RunOptionsFields({
         EasyPrivacy
       </label>
       <div className="meta">
-        Runs load the runner's cached lists:{" "}
-        {filterLists.lists?.map((list, i) => (
-          <span
+        <div>Runs load the runner's cached lists:</div>
+        {filterLists.lists?.map((list) => (
+          <div
             key={list.name}
             title={list.modified ? `fetched ${formatTime(list.modified)}` : ""}
           >
-            {i > 0 && ", "}
-            {list.label}{" "}
-            {list.present ? (
-              <b>
-                {list.version
-                  ? formatListVersion(list.version)
-                  : "unknown version"}
-              </b>
-            ) : (
-              "not cached yet (fetched before the first run that uses it)"
-            )}
-          </span>
-        )) ?? "…"}{" "}
+            {list.label} (
+            {list.present
+              ? list.version
+                ? formatListVersion(list.version)
+                : "unknown version"
+              : "not cached yet, fetched before the first run that uses it"}
+            )
+          </div>
+        )) ?? <div>…</div>}
         <button
           type="button"
           className="secondary"
