@@ -1,6 +1,7 @@
-"""Download Firefox Nightly for the agent to drive."""
+"""Find the Firefox for the agent to drive: a local build, or a fresh Nightly."""
 
 import logging
+import os
 import platform
 import tempfile
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,14 @@ logger = logging.getLogger("autowebcompat-etp")
 
 # How many earlier days of Nightly to try if the latest build can't be fetched.
 NIGHTLY_FALLBACK_DAYS = 3
+
+
+def firefox_binary() -> Path:
+    """`LOCAL_FIREFOX` if set (a local build, for native runs), else a fresh Nightly."""
+    if local := os.environ.get("LOCAL_FIREFOX"):
+        logger.info("using the local Firefox at %s", local)
+        return Path(local)
+    return install_firefox_nightly()
 
 
 def install_firefox_nightly() -> Path:

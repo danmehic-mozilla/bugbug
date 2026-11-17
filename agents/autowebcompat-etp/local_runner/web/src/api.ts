@@ -28,6 +28,8 @@ export interface RunOptions {
   easylist: boolean;
   easyprivacy: boolean;
   private: boolean;
+  /** null: natively when the server has a local Firefox. */
+  native: boolean | null;
   build: boolean;
 }
 
@@ -64,6 +66,7 @@ export interface Config {
   has_anthropic_key: boolean;
   has_bugzilla_key: boolean;
   max_parallel: number;
+  local_firefox: string | null;
   query_urls: Record<BugQuery, string>;
 }
 

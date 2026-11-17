@@ -10,6 +10,7 @@ text or a Bugzilla ``bug_id`` (read via Bugzilla broker).
 import json
 import logging
 import re
+import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -23,7 +24,7 @@ from autowebcompat_tools.task import RunTracker, Task, TaskConfig
 from claude_agent_sdk import McpServerConfig
 from pydantic import model_validator
 
-from .browser import install_firefox_nightly
+from .browser import firefox_binary
 from .config import BUGZILLA_READ_TOOLS, DEVTOOLS_TOOLS, PRIVILEGED_TOOLS
 from .exceptions import (
     EXCEPTIONS_SERVER_NAME,
@@ -464,10 +465,11 @@ async def run_autowebcompat_etp(
     Raises :class:`AgentError` if the agent ends in an error.
     """
     with Environment() as env:
-        if not config.headless:
+        # Outside Linux (a native run) there is no Xvfb: Firefox opens a real window.
+        if not config.headless and sys.platform == "linux":
             env.start_xvfb()
 
-        firefox_path = install_firefox_nightly()
+        firefox_path = firefox_binary()
         screenshot_dir = Path(tempfile.mkdtemp(prefix="autowebcompat-etp-screenshots-"))
         log_dir = Path(tempfile.mkdtemp(prefix="autowebcompat-etp-logs-"))
         content_blocking_log_file = log_dir / CONTENT_BLOCKING_LOG_FILE

@@ -3,6 +3,7 @@ import { useSnapshot } from "valtio";
 
 import type { Effort, EtpLevel, RunOptions } from "../api";
 import { EFFORTS } from "../format";
+import { store } from "../store";
 
 interface Props {
   /** The store's options proxy to edit in place. */
@@ -24,6 +25,9 @@ export function RunOptionsFields({
   compact = false,
 }: Props) {
   const snap = useSnapshot(options, { sync: true });
+  const localFirefox = useSnapshot(store).config?.local_firefox ?? null;
+  const native = !!localFirefox && snap.native !== false;
+  const runIn = useId();
   const etpName = useId();
 
   const maxTurns = (
@@ -138,14 +142,39 @@ export function RunOptionsFields({
         />
         Headless Firefox
       </label>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={snap.build}
-          onChange={(e) => (options.build = e.target.checked)}
-        />
-        {buildLabel}
-      </label>
+      {localFirefox && (
+        <>
+          <label>Run in</label>
+          <label className="check">
+            <input
+              type="radio"
+              name={runIn}
+              checked={native}
+              onChange={() => (options.native = true)}
+            />
+            Local build <span className="mono">{localFirefox}</span>
+          </label>
+          <label className="check">
+            <input
+              type="radio"
+              name={runIn}
+              checked={!native}
+              onChange={() => (options.native = false)}
+            />
+            Docker
+          </label>
+        </>
+      )}
+      {!native && (
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={snap.build}
+            onChange={(e) => (options.build = e.target.checked)}
+          />
+          {buildLabel}
+        </label>
+      )}
     </>
   );
 }

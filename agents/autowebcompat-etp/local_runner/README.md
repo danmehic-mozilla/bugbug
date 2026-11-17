@@ -54,6 +54,36 @@ uv run --locked agents/autowebcompat-etp/local_runner/server.py
 Then open <http://127.0.0.1:8000>. The server serves the built UI from
 `web/dist`, so you have to rebuild it after you pull changes to the UI.
 
+## Running with a local Firefox build
+
+Docker runs download a fresh Nightly in a Linux container. To test a Firefox you
+built yourself (on macOS, say), start the server with `LOCAL_FIREFOX` set to the
+build's binary. The form then offers *Run in: Local build / Docker* per run;
+local runs start the agent and the Bugzilla broker on this machine instead.
+
+Install the patched DevTools MCP into the agent directory once (and again after
+`mcp/etp-tools.js` changes):
+
+```sh
+cd agents/autowebcompat-etp
+npm ci --omit=dev
+node mcp/patch-mcp.mjs node_modules/@mozilla/firefox-devtools-mcp-moz
+```
+
+Then, from the repo root:
+
+```sh
+LOCAL_FIREFOX=/path/to/obj-dir/dist/Nightly.app/Contents/MacOS/firefox \
+  uv run --locked agents/autowebcompat-etp/local_runner/server.py
+```
+
+The build must match its source tree: an objdir whose checkout has moved on
+since it was built can crash at startup. An artifact build in its own worktree
+avoids that. Local runs ignore the system proxy, and on macOS Firefox gets a
+separate home under `~/hackbot/firefox-home`. Without Xvfb, a run that isn't
+headless opens a real Firefox window. `BROKER_PORT` (default 8765) sets the
+broker's port.
+
 ## Working on the UI
 
 Keep the server running, and start the Vite dev server in a second terminal:

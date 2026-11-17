@@ -4,6 +4,7 @@ The MCP server is an npm package pinned in ``package.json`` and installed into
 the image with ``npm ci`` (see the Dockerfile).
 """
 
+import os
 from pathlib import Path
 
 from claude_agent_sdk.types import McpStdioServerConfig
@@ -30,7 +31,9 @@ ALLOW_LIST_PREFS = (
 
 def resolve_bin(bin_name: str) -> str:
     """Resolve an installed MCP server binary to an absolute path."""
-    binary = Path("/app/etp") / "node_modules" / ".bin" / bin_name
+    # The image installs it into /app/etp; a native run points ETP_MCP_DIR at its own.
+    mcp_dir = Path(os.environ.get("ETP_MCP_DIR", "/app/etp"))
+    binary = mcp_dir / "node_modules" / ".bin" / bin_name
     if not binary.exists():
         raise RuntimeError(
             f"MCP server binary not found at {binary}; the image should install "
@@ -80,6 +83,10 @@ def build_firefox_devtools_server(
             args += ["--pref", f"{pref}=false"]
     if headless:
         args.append("--headless")
+    if os.environ.get("LOCAL_FIREFOX"):
+        # A native run shares the host's network settings; a system proxy or
+        # PAC file there (e.g. a local blocker) would break test sites.
+        args += ["--pref", "network.proxy.type=0"]
 
     env = {"MOZ_REMOTE_ALLOW_SYSTEM_ACCESS": "1"}
     if disable_exceptions:

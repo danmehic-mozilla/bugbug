@@ -26,6 +26,7 @@ export const DEFAULT_OPTIONS: RunOptions = {
   easylist: false,
   easyprivacy: false,
   private: false,
+  native: null,
   build: false,
 };
 
