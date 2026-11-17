@@ -70,6 +70,30 @@ export interface Config {
   query_urls: Record<BugQuery, string>;
 }
 
+/** A model the Models API lists, or one of the server's fallbacks. */
+export interface ModelInfo {
+  id: string;
+  display_name: string;
+}
+
+export interface ModelList {
+  models: ModelInfo[];
+  /** The Models API couldn't be reached; these are a fixed list. */
+  fallback: boolean;
+  error?: string;
+}
+
+/** The runner's cached copy of a filter list, which local runs load. */
+export interface FilterListInfo {
+  name: FilterList;
+  label: string;
+  url: string;
+  present: boolean;
+  version: string | null;
+  /** File time in seconds. */
+  modified: number | null;
+}
+
 /** The Bugzilla bug lists runs can be queued from. */
 export type BugQuery = "untriaged" | "open";
 
@@ -235,6 +259,9 @@ const runPath = (runId: string) => `/api/runs/${encodeURIComponent(runId)}`;
 
 export const api = {
   config: () => request<Config>("/api/config"),
+  models: () => request<ModelList>("/api/models"),
+  filterLists: () => request<FilterListInfo[]>("/api/filter-lists"),
+  fetchFilterLists: () => post<FilterListInfo[]>("/api/filter-lists/fetch"),
   whoami: () => request<WhoAmI>("/api/whoami"),
   runs: () => request<RunInfo[]>("/api/runs"),
   startRun: (params: RunParams) => post<RunInfo>("/api/runs", params),

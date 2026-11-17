@@ -6,6 +6,8 @@ import { proxy } from "valtio";
 import type {
   Applied,
   Config,
+  FilterListInfo,
+  ModelList,
   Review,
   RunInfo,
   RunOptions,
@@ -88,9 +90,18 @@ export interface StartState {
   error: string | null;
 }
 
+/** The runner's cached filter lists, and the "Fetch latest" button's state. */
+export interface FilterListsState {
+  lists: FilterListInfo[] | null;
+  busy: boolean;
+  error: string | null;
+}
+
 export const store = proxy({
   config: null as Config | null,
   configError: null as string | null,
+  models: null as ModelList | null,
+  filterLists: { lists: null, busy: false, error: null } as FilterListsState,
   runs: [] as RunInfo[],
   start: {
     bugId: "",

@@ -35,7 +35,7 @@ const ETP_LABELS: Record<EtpLevel, string> = {
   strict: "ETP Strict",
 };
 
-type ConfigParts = {
+export type ConfigParts = {
   etp?: EtpLevel | null;
   easylist?: boolean;
   easyprivacy?: boolean;
@@ -54,6 +54,12 @@ export function configLines(config: ConfigParts): string[] {
     ...(config.easyprivacy ? ["+ EasyPrivacy"] : []),
     ...(config.private ? ["+ Private Browsing Mode"] : []),
   ];
+}
+
+/** 202611171744 -> 2026-11-17 17:44; anything else unchanged. */
+export function formatListVersion(version: string): string {
+  const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(version);
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : version;
 }
 
 /**

@@ -1,6 +1,13 @@
 # /// script
 # requires-python = ">=3.14"
-# dependencies = ["fastapi", "uvicorn", "requests", "python-dotenv", "pillow"]
+# dependencies = [
+#     "anthropic",
+#     "fastapi",
+#     "pillow",
+#     "python-dotenv",
+#     "requests",
+#     "uvicorn",
+# ]
 # ///
 """Local runner and review UI for the autowebcompat-etp agent.
 
@@ -39,6 +46,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
+import anthropic
 import requests
 import uvicorn
 from dotenv import load_dotenv
@@ -66,6 +74,7 @@ ARTIFACTS_ROOT = Path(
 # Firefox instead of through compose.yml (e.g. to test a local build on macOS).
 LOCAL_FIREFOX = os.environ.get("LOCAL_FIREFOX")
 BROKER_PORT = int(os.environ.get("BROKER_PORT", "8765"))
+PORT = int(os.environ.get("PORT", "8000"))
 BUGZILLA_REST = os.environ.get(
     "BUGZILLA_API_URL", "https://bugzilla.mozilla.org/rest"
 ).rstrip("/")
@@ -80,6 +89,28 @@ APPLIED_FILE = "runner-applied.json"
 
 ETP_NAMES = {"off": "ETP off", "standard": "Standard ETP", "strict": "Strict ETP"}
 FILTER_LIST_NAMES = {"easylist": "EasyList", "easyprivacy": "EasyPrivacy"}
+
+# Runs load the filter lists from a copy the runner keeps here (served at
+# /api/filter-lists/<name>.txt), refreshed on request from these URLs, instead
+# of having every Firefox download them again.
+FILTER_LISTS_DIR = ARTIFACTS_ROOT.parent / "filter-lists"
+FILTER_LIST_URLS = {
+    "easylist": "https://easylist.to/easylist/easylist.txt",
+    "easyprivacy": "https://easylist.to/easylist/easyprivacy.txt",
+}
+FILTER_LIST_VERSION_RE = re.compile(r"^! Version: *(\S+)", re.MULTILINE)
+FILTER_LIST_LOCK = threading.Lock()
+
+# What /api/models offers when the Models API can't be reached.
+FALLBACK_MODELS = [
+    {"id": "claude-opus-5-5", "display_name": "Claude Opus 5.5"},
+    {"id": "claude-sonnet-5-5", "display_name": "Claude Sonnet 5.5"},
+    {"id": "claude-haiku-5-5", "display_name": "Claude Haiku 5.5"},
+    {"id": "claude-fable-5-2", "display_name": "Claude Fable 5.2"},
+]
+MODELS_TTL = 3600
+# (fetched at, models) of the last successful Models API call.
+MODELS_CACHE: tuple[float, list[dict[str, str]]] | None = None
 
 # Labels of the screenshot stages runs from before the baseline/target split saved.
 LEGACY_SCREENSHOT_LABELS = {
@@ -301,6 +332,48 @@ def runs_native(params: dict[str, Any]) -> bool:
     return bool(LOCAL_FIREFOX) and params.get("native") is not False
 
 
+def filter_list_info(name: str) -> dict[str, Any]:
+    """The cached copy of a filter list: its `! Version:` header and file time."""
+    path = FILTER_LISTS_DIR / f"{name}.txt"
+    info = {
+        "name": name,
+        "label": FILTER_LIST_NAMES[name],
+        "url": FILTER_LIST_URLS[name],
+    }
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            head = f.read(65536)
+        modified = path.stat().st_mtime
+    except FileNotFoundError:
+        return info | {"present": False, "version": None, "modified": None}
+    match = FILTER_LIST_VERSION_RE.search(head)
+    return info | {
+        "present": True,
+        "version": match.group(1) if match else None,
+        "modified": modified,
+    }
+
+
+def fetch_filter_lists(names: list[str]) -> None:
+    """Download the latest copies of these lists, replacing the cached ones."""
+    FILTER_LISTS_DIR.mkdir(parents=True, exist_ok=True)
+    with FILTER_LIST_LOCK:
+        for name in names:
+            response = requests.get(FILTER_LIST_URLS[name], timeout=120)
+            response.raise_for_status()
+            if not FILTER_LIST_VERSION_RE.search(response.text[:65536]):
+                raise ValueError(f"{FILTER_LIST_URLS[name]} has no ! Version: header")
+            tmp = FILTER_LISTS_DIR / f".{name}.txt.tmp"
+            tmp.write_bytes(response.content)
+            tmp.replace(FILTER_LISTS_DIR / f"{name}.txt")
+
+
+def filter_list_base_url(params: dict[str, Any]) -> str:
+    """Where the run's Firefox loads the cached filter lists from."""
+    host = "127.0.0.1" if runs_native(params) else "host.docker.internal"
+    return f"http://{host}:{PORT}/api/filter-lists"
+
+
 def execute(run: Run) -> None:
     params = run.params
     agent_env = {"RUN_ID": run.run_id}
@@ -314,6 +387,13 @@ def execute(run: Run) -> None:
     for name in ("easylist", "easyprivacy", "private"):
         if params.get(name):
             agent_env[name.upper()] = "true"
+    if lists := [name for name in FILTER_LIST_URLS if params.get(name)]:
+        if missing := [n for n in lists if not filter_list_info(n)["present"]]:
+            run.add_line(
+                f"[runner] fetching {', '.join(missing)} into {FILTER_LISTS_DIR}"
+            )
+            fetch_filter_lists(missing)
+        agent_env["ETP_FILTER_LIST_BASE_URL"] = filter_list_base_url(params)
 
     # compose.yml passes the rest through from the host environment.
     env = {k: v for k, v in os.environ.items() if k not in ("BUG_ID", "BUG_DATA")}
@@ -692,6 +772,44 @@ def config() -> dict[str, Any]:
     }
 
 
+@app.get("/api/models")
+def list_models() -> dict[str, Any]:
+    """The models the API key can use, newest first; a fixed list if that fails."""
+    global MODELS_CACHE
+    if MODELS_CACHE and time.time() - MODELS_CACHE[0] < MODELS_TTL:
+        return {"models": MODELS_CACHE[1], "fallback": False}
+    try:
+        client = anthropic.Anthropic(timeout=15.0, max_retries=1)
+        found = sorted(client.models.list(), key=lambda m: m.created_at, reverse=True)
+    except Exception as exc:
+        return {"models": FALLBACK_MODELS, "fallback": True, "error": str(exc)}
+    models = [{"id": m.id, "display_name": m.display_name} for m in found]
+    MODELS_CACHE = (time.time(), models)
+    return {"models": models, "fallback": False}
+
+
+@app.get("/api/filter-lists")
+def filter_lists() -> list[dict[str, Any]]:
+    return [filter_list_info(name) for name in FILTER_LIST_URLS]
+
+
+@app.post("/api/filter-lists/fetch")
+def refresh_filter_lists() -> list[dict[str, Any]]:
+    try:
+        fetch_filter_lists(list(FILTER_LIST_URLS))
+    except (requests.RequestException, ValueError) as exc:
+        raise HTTPException(502, f"could not fetch the filter lists: {exc}") from exc
+    return filter_lists()
+
+
+@app.get("/api/filter-lists/{name}.txt")
+def filter_list_file(name: str) -> FileResponse:
+    path = FILTER_LISTS_DIR / f"{name}.txt"
+    if name not in FILTER_LIST_URLS or not path.is_file():
+        raise HTTPException(404, f"no cached filter list {name}")
+    return FileResponse(path, media_type="text/plain; charset=utf-8")
+
+
 @app.get("/api/bugs/{query}")
 def bug_list(query: str) -> list[dict[str, Any]]:
     if query not in BUG_QUERIES:
@@ -998,22 +1116,38 @@ def start_broker() -> subprocess.Popen:
     env |= {"HOST": "127.0.0.1", "PORT": str(BROKER_PORT)}
     return subprocess.Popen(
         [
-            "uv", "run", "--frozen", "--project", str(REPO_ROOT),
-            "--package", "hackbot-agent-autowebcompat-etp",
-            "python", "-m", "hackbot_agents.autowebcompat_etp.broker",
+            "uv",
+            "run",
+            "--frozen",
+            "--project",
+            str(REPO_ROOT),
+            "--package",
+            "hackbot-agent-autowebcompat-etp",
+            "python",
+            "-m",
+            "hackbot_agents.autowebcompat_etp.broker",
         ],  # fmt: skip
         env=env,
         start_new_session=True,
     )
 
 
+def exit_on_signal(signum: int, frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
 if __name__ == "__main__":
+    # uvicorn shuts down on SIGTERM/SIGHUP, restores the handlers it found and
+    # re-raises the signal. With the default handlers that kills the process
+    # before `finally` runs and leaves the broker behind; these exit through it.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, exit_on_signal)
     broker = start_broker() if LOCAL_FIREFOX else None
     try:
         uvicorn.run(
             app,
             host=os.environ.get("HOST", "127.0.0.1"),
-            port=int(os.environ.get("PORT", "8000")),
+            port=PORT,
         )
     finally:
         if broker is not None:

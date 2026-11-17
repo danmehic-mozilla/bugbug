@@ -30,6 +30,14 @@ export function init(): () => void {
     (config) => (store.config = config),
     (err) => (store.configError = message(err))
   );
+  api.models().then(
+    (models) => (store.models = models),
+    () => {}
+  );
+  api.filterLists().then(
+    (lists) => (store.filterLists.lists = lists),
+    (err) => (store.filterLists.error = message(err))
+  );
   loadRuns();
   const poll = setInterval(loadRuns, RUNS_POLL_MS);
   const tick = setInterval(() => {
@@ -92,6 +100,20 @@ export async function startRun() {
     start.error = message(err);
   } finally {
     start.busy = false;
+  }
+}
+
+/** Download the latest EasyList and EasyPrivacy into the runner's cache. */
+export async function fetchFilterLists() {
+  const state = store.filterLists;
+  state.busy = true;
+  state.error = null;
+  try {
+    state.lists = await api.fetchFilterLists();
+  } catch (err) {
+    state.error = message(err);
+  } finally {
+    state.busy = false;
   }
 }
 

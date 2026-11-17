@@ -1,28 +1,55 @@
 import { useSnapshot } from "valtio";
 
-import { api, type EtpLevel, type FilterList } from "../api";
-import { brokenLabel, formatCost } from "../format";
+import { api, type EtpResult, type FilterList, type RunParams } from "../api";
+import {
+  baselineConfig,
+  brokenLabel,
+  configLabel,
+  formatCost,
+  type ConfigParts,
+} from "../format";
 import { store } from "../store";
+import { ConfigLabel } from "./ConfigLabel";
 import { CopyButton } from "./CopyButton";
 
-const ETP_NAMES = {
-  off: "ETP Off",
-  standard: "ETP Standard",
-  strict: "ETP Strict",
-};
 const FILTER_LIST_NAMES = { easylist: "EasyList", easyprivacy: "EasyPrivacy" };
 
-/** The run's baseline and target configurations, like the server describes them. */
-function configLabels(result: {
-  etp?: EtpLevel;
-  filter_lists?: readonly FilterList[];
-}) {
-  const etp = result.etp ?? "strict";
-  const lists = (result.filter_lists ?? []).map((l) => FILTER_LIST_NAMES[l]);
+/**
+ * The run's target configuration: what it was started with, else what the
+ * result records (runs from before the ETP level was a parameter were Strict).
+ */
+function targetConfig(
+  params: RunParams | undefined,
+  result:
+    | (Pick<EtpResult, "etp" | "private"> & {
+        filter_lists?: readonly FilterList[];
+      })
+    | null
+): ConfigParts {
+  if (params?.etp) return params;
+  const lists = result?.filter_lists ?? [];
   return {
-    baseline: etp === "strict" ? ETP_NAMES.standard : ETP_NAMES.off,
-    target: [ETP_NAMES[etp], ...lists].join(" + "),
+    etp: result?.etp ?? "strict",
+    easylist: lists.includes("easylist"),
+    easyprivacy: lists.includes("easyprivacy"),
+    private: result?.private,
   };
+}
+
+/** The target and baseline configurations, one part per line. */
+function Configs({ target }: { target: ConfigParts }) {
+  return (
+    <dl className="kv">
+      <dt>Target</dt>
+      <dd>
+        <ConfigLabel config={target} />
+      </dd>
+      <dt>Baseline (should work)</dt>
+      <dd>
+        <ConfigLabel config={baselineConfig(target)} />
+      </dd>
+    </dl>
+  );
 }
 
 function Json({
@@ -52,10 +79,12 @@ function Json({
 }
 
 export function ResultView() {
-  const { run } = useSnapshot(store);
+  const { run, runs } = useSnapshot(store);
   if (!run?.review) return null;
   const { runId, review } = run;
   const { summary, result, screenshots, screenshot_labels } = review;
+  const params = (run.info ?? runs.find((r) => r.run_id === runId))?.params;
+  const target = targetConfig(params, result);
   const findings = summary.findings;
   const logLink = review.has_agent_log && (
     <p>
@@ -69,6 +98,7 @@ export function ResultView() {
     return (
       <>
         <h2>Result</h2>
+        <Configs target={target} />
         <div className="note err">
           <b>Run failed:</b> {summary.error}
         </div>
@@ -86,6 +116,7 @@ export function ResultView() {
   return (
     <>
       <h2>Result</h2>
+      <Configs target={target} />
       <div className="card">
         <p>{result.summary}</p>
         <dl className="kv">
@@ -100,13 +131,13 @@ export function ResultView() {
               </>
             )}
           </dd>
-          <dt>Baseline: {configLabels(result).baseline}</dt>
+          <dt>Baseline: {configLabel(baselineConfig(target))}</dt>
           <dd>
             {brokenLabel(
               result.broken_in_baseline ?? result.broken_in_standard ?? null
             )}
           </dd>
-          <dt>Target: {configLabels(result).target}</dt>
+          <dt>Target: {configLabel(target)}</dt>
           <dd>
             {brokenLabel(
               result.broken_in_target ?? result.broken_in_strict ?? null

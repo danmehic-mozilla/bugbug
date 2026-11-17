@@ -56,6 +56,17 @@ const ETP_FILTER_LISTS = {
   },
 };
 
+// Set by the local runner, which serves cached copies of the lists as
+// `${base}/${key}.txt`: Firefox loads them, and the versions are read, from there.
+const ETP_FILTER_LIST_BASE_URL = (
+  process.env.ETP_FILTER_LIST_BASE_URL || ""
+).replace(/\/+$/, "");
+if (ETP_FILTER_LIST_BASE_URL) {
+  for (const [key, list] of Object.entries(ETP_FILTER_LISTS)) {
+    list.url = `${ETP_FILTER_LIST_BASE_URL}/${key}.txt`;
+  }
+}
+
 const ETP_LEVELS = ["off", "standard", "strict"];
 
 // The configuration last set with set_etp_mode (e.g. "strict+easylist"), which

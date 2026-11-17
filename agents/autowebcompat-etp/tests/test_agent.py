@@ -150,6 +150,18 @@ def test_firefox_devtools_server_passes_log_file(tmp_path, monkeypatch):
     assert server["env"]["ETP_CONTENT_BLOCKING_LOG_FILE"] == str(log)
 
 
+def test_firefox_devtools_server_passes_filter_list_base_url(tmp_path, monkeypatch):
+    monkeypatch.setattr(mcp_servers, "resolve_bin", lambda name: name)
+    monkeypatch.delenv("ETP_FILTER_LIST_BASE_URL", raising=False)
+    server = mcp_servers.build_firefox_devtools_server(tmp_path)
+    assert "ETP_FILTER_LIST_BASE_URL" not in server["env"]
+
+    base_url = "http://127.0.0.1:8000/api/filter-lists"
+    monkeypatch.setenv("ETP_FILTER_LIST_BASE_URL", base_url)
+    server = mcp_servers.build_firefox_devtools_server(tmp_path)
+    assert server["env"]["ETP_FILTER_LIST_BASE_URL"] == base_url
+
+
 def test_firefox_devtools_server_disables_exceptions(tmp_path, monkeypatch):
     monkeypatch.setattr(mcp_servers, "resolve_bin", lambda name: name)
     prefs = [f"{pref}=false" for pref in mcp_servers.ALLOW_LIST_PREFS]
