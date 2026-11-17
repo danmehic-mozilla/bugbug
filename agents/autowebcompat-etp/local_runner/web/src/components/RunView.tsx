@@ -1,5 +1,6 @@
 import { useSnapshot } from "valtio";
 
+import { openCompare } from "../actions";
 import { store } from "../store";
 import { ActionsForm } from "./ActionsForm";
 import { LogView } from "./LogView";
@@ -17,6 +18,18 @@ export function RunView() {
   return (
     <>
       <h1 className="mono">{run.runId}</h1>
+      {!!info?.params.bug_id && (
+        <p className="meta">
+          <a
+            href="#"
+            onClick={(e) => (
+              e.preventDefault(), openCompare(info.params.bug_id!)
+            )}
+          >
+            Compare all runs of bug {info.params.bug_id}
+          </a>
+        </p>
+      )}
       {info ? (
         <Progress info={info} />
       ) : (

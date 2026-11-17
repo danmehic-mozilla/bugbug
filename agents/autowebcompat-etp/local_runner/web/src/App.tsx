@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useSnapshot } from "valtio";
 
 import { init, openTriage } from "./actions";
+import { CompareView } from "./components/CompareView";
 import { RunList } from "./components/RunList";
 import { RunView } from "./components/RunView";
 import { StartForm } from "./components/StartForm";
@@ -57,7 +58,9 @@ export function App() {
         <RunList />
       </aside>
       <main>
-        {snap.run && config ? (
+        {snap.compare ? (
+          <CompareView />
+        ) : snap.run && config ? (
           <RunView />
         ) : (
           <div className="empty">Start a run or pick one on the left.</div>

@@ -1,8 +1,28 @@
 import { useSnapshot } from "valtio";
 
-import { api } from "../api";
+import { api, type EtpLevel, type FilterList } from "../api";
 import { brokenLabel, formatCost } from "../format";
 import { store } from "../store";
+
+const ETP_NAMES = {
+  off: "ETP off",
+  standard: "Standard ETP",
+  strict: "Strict ETP",
+};
+const FILTER_LIST_NAMES = { easylist: "EasyList", easyprivacy: "EasyPrivacy" };
+
+/** The run's baseline and target configurations, like the server describes them. */
+function configLabels(result: {
+  etp?: EtpLevel;
+  filter_lists?: readonly FilterList[];
+}) {
+  const etp = result.etp ?? "strict";
+  const lists = (result.filter_lists ?? []).map((l) => FILTER_LIST_NAMES[l]);
+  return {
+    baseline: etp === "strict" ? ETP_NAMES.standard : ETP_NAMES.off,
+    target: [ETP_NAMES[etp], ...lists].join(" + "),
+  };
+}
 
 function Json({ title, value }: { title: string; value: unknown }) {
   return (
@@ -62,15 +82,45 @@ export function ResultView() {
               </>
             )}
           </dd>
-          <dt>Standard / Strict</dt>
+          <dt>Baseline: {configLabels(result).baseline}</dt>
           <dd>
-            {brokenLabel(result.broken_in_standard)} /{" "}
-            {brokenLabel(result.broken_in_strict)}
+            {brokenLabel(
+              result.broken_in_baseline ?? result.broken_in_standard ?? null
+            )}
           </dd>
-          <dt>Strict with EasyPrivacy</dt>
-          <dd>{brokenLabel(result.broken_with_easyprivacy ?? null)}</dd>
-          <dt>Strict with EasyList + EasyPrivacy</dt>
-          <dd>{brokenLabel(result.broken_with_easylist ?? null)}</dd>
+          <dt>Target: {configLabels(result).target}</dt>
+          <dd>
+            {brokenLabel(
+              result.broken_in_target ?? result.broken_in_strict ?? null
+            )}
+          </dd>
+          {result.broken_without_lists != null && (
+            <>
+              <dt>Target without lists</dt>
+              <dd>{brokenLabel(result.broken_without_lists)}</dd>
+            </>
+          )}
+          {result.private != null && (
+            <>
+              <dt>Private window</dt>
+              <dd>{result.private ? "yes" : "no"}</dd>
+            </>
+          )}
+          {!!Object.keys(result.filter_list_versions ?? {}).length && (
+            <>
+              <dt>Filter list versions</dt>
+              <dd>
+                {Object.entries(result.filter_list_versions ?? {}).map(
+                  ([name, version]) => (
+                    <div key={name}>
+                      {FILTER_LIST_NAMES[name as FilterList] ?? name}:{" "}
+                      <code>{version}</code>
+                    </div>
+                  )
+                )}
+              </dd>
+            </>
+          )}
           <dt>Severity / priority</dt>
           <dd>
             {result.severity ?? "—"} / {result.priority ?? "—"}

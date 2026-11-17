@@ -1,6 +1,7 @@
+import { useId } from "react";
 import { useSnapshot } from "valtio";
 
-import type { Effort, RunOptions } from "../api";
+import type { Effort, EtpLevel, RunOptions } from "../api";
 import { EFFORTS } from "../format";
 
 interface Props {
@@ -10,13 +11,20 @@ interface Props {
   compact?: boolean;
 }
 
-/** Model / effort / max turns / headless / mode / build, shared by both start flows. */
+const ETP_LEVELS: [EtpLevel, string][] = [
+  ["off", "ETP off"],
+  ["standard", "ETP Standard"],
+  ["strict", "ETP Strict"],
+];
+
+/** Target configuration, then model / effort / max turns / headless / build, shared by both start flows. */
 export function RunOptionsFields({
   options,
   buildLabel = "Rebuild image first",
   compact = false,
 }: Props) {
   const snap = useSnapshot(options, { sync: true });
+  const etpName = useId();
 
   const maxTurns = (
     <div>
@@ -34,6 +42,68 @@ export function RunOptionsFields({
 
   return (
     <>
+      <h3>Config</h3>
+      <label>Target configuration</label>
+      {ETP_LEVELS.map(([level, label]) => (
+        <label key={level} className="check">
+          <input
+            type="radio"
+            name={etpName}
+            checked={snap.etp === level}
+            onChange={() => {
+              options.etp = level;
+              // Retesting disables ETP's exceptions, which is moot without ETP.
+              if (level === "off") options.mode = "investigate";
+            }}
+          />
+          {label}
+        </label>
+      ))}
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={snap.easylist}
+          onChange={(e) => (options.easylist = e.target.checked)}
+        />
+        EasyList
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={snap.easyprivacy}
+          onChange={(e) => (options.easyprivacy = e.target.checked)}
+        />
+        EasyPrivacy
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={snap.private}
+          onChange={(e) => (options.private = e.target.checked)}
+        />
+        Private window
+      </label>
+      {snap.etp === "standard" && !snap.private && (
+        <div className="note">
+          Standard blocks trackers only in private windows.
+        </div>
+      )}
+      {snap.etp === "off" && !snap.easylist && !snap.easyprivacy && (
+        <div className="note">
+          Control run: no protections, so no fix is proposed.
+        </div>
+      )}
+      <label className="check">
+        <input
+          type="checkbox"
+          disabled={snap.etp === "off"}
+          checked={snap.mode === "retest"}
+          onChange={(e) =>
+            (options.mode = e.target.checked ? "retest" : "investigate")
+          }
+        />
+        Retest with ETP exceptions disabled
+      </label>
       <div className="row">
         <div>
           <label>Model</label>
@@ -67,16 +137,6 @@ export function RunOptionsFields({
           onChange={(e) => (options.headless = e.target.checked)}
         />
         Headless Firefox
-      </label>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={snap.mode === "retest"}
-          onChange={(e) =>
-            (options.mode = e.target.checked ? "retest" : "investigate")
-          }
-        />
-        Retest with ETP exceptions disabled
       </label>
       <label className="check">
         <input

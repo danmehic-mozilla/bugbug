@@ -11,6 +11,7 @@ import {
 } from "../actions";
 import type { BugQuery } from "../api";
 import { store, type TriageStep } from "../store";
+import { ConfigsToCompare } from "./ConfigsToCompare";
 import { RunOptionsFields } from "./RunOptionsFields";
 import { StatusBadge } from "./StatusBadge";
 
@@ -166,10 +167,11 @@ export function TriageDialog() {
     );
   } else {
     const ids = triage.selected;
+    const total = ids.length * Math.max(triage.configs.length, 1);
     body = (
       <>
         <p>
-          Queue <b>{plural(ids.length, "run")}</b>:{" "}
+          Queue <b>{plural(total, "run")}</b> for:{" "}
           {ids.map((id, i) => (
             <span key={id}>
               {i > 0 && ", "}
@@ -190,11 +192,15 @@ export function TriageDialog() {
           buildLabel="Rebuild image before the first run"
           compact
         />
+        <ConfigsToCompare
+          options={store.triage!.options}
+          configs={store.triage!.configs}
+        />
       </>
     );
     nextButton = (
       <button onClick={queueSelected} disabled={busy}>
-        Queue {plural(ids.length, "run")}
+        Queue {plural(total, "run")}
       </button>
     );
   }

@@ -1,7 +1,7 @@
 import { useSnapshot } from "valtio";
 
 import { selectRun } from "../actions";
-import { formatCost, formatTime } from "../format";
+import { configLabel, formatCost, formatTime } from "../format";
 import { store } from "../store";
 import { RunBadges } from "./StatusBadge";
 
@@ -17,6 +17,9 @@ export function RunList() {
           onClick={() => selectRun(run.run_id)}
         >
           <div className="id">{run.run_id}</div>
+          {configLabel(run.params) && (
+            <div className="meta">{configLabel(run.params)}</div>
+          )}
           <div className="meta">
             <RunBadges run={run} /> {formatTime(run.started ?? run.queued)}
             {run.turns ? ` · ${run.turns} turns` : ""}

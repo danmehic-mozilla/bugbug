@@ -72,13 +72,30 @@ META_FILE = "runner-meta.json"
 OUTPUT_FILE = "runner-output.log"
 APPLIED_FILE = "runner-applied.json"
 
-SCREENSHOT_LABELS = {
+ETP_NAMES = {"off": "ETP off", "standard": "Standard ETP", "strict": "Strict ETP"}
+FILTER_LIST_NAMES = {"easylist": "EasyList", "easyprivacy": "EasyPrivacy"}
+
+# Labels of the screenshot stages runs from before the baseline/target split saved.
+LEGACY_SCREENSHOT_LABELS = {
     "standard": "Standard ETP",
     "strict": "Strict ETP (broken)",
     "easyprivacy": "Strict ETP with the EasyPrivacy list",
-    "easylist": "Strict ETP with EasyList and EasyPrivacy",
-    "fixed": "Strict ETP with the proposed fix",
+    "easylist": "Strict ETP with EasyList",
 }
+
+
+def describe_config(etp: str, filter_lists: list[str] | None = None) -> str:
+    """E.g. "Strict ETP + EasyList", like the agent's own description."""
+    names = [FILTER_LIST_NAMES.get(name, name) for name in filter_lists or []]
+    return " + ".join([ETP_NAMES.get(etp, etp), *names])
+
+
+def configs(result: dict[str, Any] | None) -> tuple[str, str]:
+    """The baseline and target configurations of a result, described."""
+    etp = (result or {}).get("etp") or "strict"
+    target = describe_config(etp, (result or {}).get("filter_lists"))
+    return describe_config("standard" if etp == "strict" else "off"), target
+
 
 # How many agent runs execute at once; the rest wait in the queue.
 MAX_PARALLEL = int(os.environ.get("MAX_PARALLEL", "1"))
@@ -191,7 +208,18 @@ class StartRequest(BaseModel):
     max_turns: int | None = None
     headless: bool = False
     mode: Literal["investigate", "retest"] = "investigate"
+    etp: Literal["off", "standard", "strict"] = "strict"
+    easylist: bool = False
+    easyprivacy: bool = False
+    private: bool = False
     build: bool = True
+
+
+class TargetConfig(BaseModel):
+    etp: Literal["off", "standard", "strict"] = "strict"
+    easylist: bool = False
+    easyprivacy: bool = False
+    private: bool = False
 
 
 class BatchRequest(BaseModel):
@@ -201,6 +229,13 @@ class BatchRequest(BaseModel):
     max_turns: int | None = None
     headless: bool = False
     mode: Literal["investigate", "retest"] = "investigate"
+    etp: Literal["off", "standard", "strict"] = "strict"
+    easylist: bool = False
+    easyprivacy: bool = False
+    private: bool = False
+    # When set, one run per bug and configuration; each overrides the
+    # etp/easylist/easyprivacy/private above.
+    configs: list[TargetConfig] | None = None
     build: bool = True
 
 
@@ -241,6 +276,11 @@ def execute(run: Run) -> None:
             env_args += ["-e", f"{name.upper()}={params[name]}"]
     if params.get("headless"):
         env_args += ["-e", "HEADLESS=true"]
+    if params.get("etp"):
+        env_args += ["-e", f"ETP={params['etp']}"]
+    for name in ("easylist", "easyprivacy", "private"):
+        if params.get(name):
+            env_args += ["-e", f"{name.upper()}=true"]
 
     cmd = compose_cmd(
         "run",
@@ -353,6 +393,17 @@ def stored_run_info(path: Path) -> dict[str, Any] | None:
         meta["status"] = (summary or {}).get("status") or RunStatus.INTERRUPTED
     meta["active"] = False
     meta["applied"] = (path / APPLIED_FILE).exists()
+    params = meta.setdefault("params", {})
+    result = ((summary or {}).get("findings") or {}).get("result")
+    if "etp" not in params and isinstance(result, dict) and result.get("etp"):
+        # Legacy meta without the configuration: use what the result recorded.
+        lists = result.get("filter_lists") or []
+        params |= {
+            "etp": result["etp"],
+            "easylist": "easylist" in lists,
+            "easyprivacy": "easyprivacy" in lists,
+            "private": bool(result.get("private")),
+        }
     return meta
 
 
@@ -366,18 +417,9 @@ def tri_state(value: bool | None) -> str:
 def draft_comment(result: dict[str, Any]) -> str:
     out = ["**Automated ETP investigation** (autowebcompat-etp agent)", ""]
     out += [result.get("summary", "").strip(), ""]
-    out.append(f"- Standard ETP: {tri_state(result.get('broken_in_standard'))}")
-    out.append(f"- Strict ETP: {tri_state(result.get('broken_in_strict'))}")
-    if result.get("broken_with_easyprivacy") is not None:
-        out.append(
-            "- Strict ETP with the EasyPrivacy list instead of the tracker lists: "
-            + tri_state(result["broken_with_easyprivacy"])
-        )
-    if result.get("broken_with_easylist") is not None:
-        out.append(
-            "- Strict ETP with EasyList and EasyPrivacy instead of the tracker "
-            "lists: " + tri_state(result["broken_with_easylist"])
-        )
+    baseline, target = configs(result)
+    out.append(f"- {baseline}: {tri_state(result.get('broken_in_baseline'))}")
+    out.append(f"- {target}: {tri_state(result.get('broken_in_target'))}")
     if result.get("failure_reason"):
         out.append(f"- Outcome: `{result['failure_reason']}`")
     else:
@@ -503,7 +545,13 @@ def screenshot_labels(result: dict[str, Any] | None) -> dict[str, str]:
     """The screenshot labels, each with the blocked trackers the agent counted."""
     counts = (result or {}).get("blocked_trackers") or {}
     labels = {}
-    for stage, label in SCREENSHOT_LABELS.items():
+    baseline, target = configs(result)
+    stage_labels = LEGACY_SCREENSHOT_LABELS | {
+        "baseline": baseline,
+        "target": f"{target} (broken)",
+        "fixed": f"{target} with the proposed fix",
+    }
+    for stage, label in stage_labels.items():
         count = counts.get(stage)
         if count is not None:
             label += f", {count} blocked tracker{'' if count == 1 else 's'}"
@@ -640,13 +688,61 @@ def start_run(req: StartRequest) -> dict[str, Any]:
 def start_batch(req: BatchRequest) -> list[dict[str, Any]]:
     if not req.bug_ids:
         raise HTTPException(400, "no bugs selected")
-    options = req.model_dump(exclude={"bug_ids"})
+    options = req.model_dump(exclude={"bug_ids", "configs"})
+    # No configs: one run per bug with the target in the request itself.
+    targets = [c.model_dump() for c in req.configs or []] or [{}]
     runs = []
-    for i, bug_id in enumerate(req.bug_ids):
-        # One image build is enough for the whole batch.
-        params = options | {"bug_id": bug_id, "build": req.build and i == 0}
-        runs.append(enqueue(params).info())
+    for bug_id in req.bug_ids:
+        for target in targets:
+            # One image build is enough for the whole batch.
+            params = (
+                options | target | {"bug_id": bug_id, "build": req.build and not runs}
+            )
+            runs.append(enqueue(params).info())
     return runs
+
+
+@app.get("/api/bugs/{bug_id}/compare")
+def compare_runs(bug_id: int) -> list[dict[str, Any]]:
+    """One row per run of the bug, for comparing target configurations."""
+    rows = []
+    for run in list_runs():
+        if (run.get("params") or {}).get("bug_id") != bug_id:
+            continue
+        path = ARTIFACTS_ROOT / run["run_id"]
+        findings = (read_json(path / "summary.json") or {}).get("findings") or {}
+        result = findings.get("result") or {}
+        labels = screenshot_labels(result)
+        rows.append(
+            {
+                "run_id": run["run_id"],
+                "status": run["status"],
+                "params": run["params"],
+                "cost": run.get("cost"),
+                "started": run.get("started"),
+                "has_result": bool(result),
+                "etp": result.get("etp"),
+                "private": result.get("private"),
+                "filter_lists": result.get("filter_lists"),
+                "filter_list_versions": result.get("filter_list_versions"),
+                "failure_reason": result.get("failure_reason"),
+                "broken_in_baseline": result.get(
+                    "broken_in_baseline", result.get("broken_in_standard")
+                ),
+                "broken_in_target": result.get(
+                    "broken_in_target", result.get("broken_in_strict")
+                ),
+                "broken_without_lists": result.get("broken_without_lists"),
+                "blocked_trackers": result.get("blocked_trackers") or {},
+                "screenshots": {
+                    stage: key
+                    for stage, key in (result.get("screenshot_urls") or {}).items()
+                    if (path / key).is_file()
+                },
+                "screenshot_labels": labels,
+            }
+        )
+    return rows
 
 
 @app.get("/api/runs")

@@ -13,13 +13,30 @@ export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 /** `retest` reruns an old bug with Firefox's ETP exceptions turned off. */
 export type Mode = "investigate" | "retest";
 
+/** The ETP category of the configuration the agent investigates. */
+export type EtpLevel = "off" | "standard" | "strict";
+
+export type FilterList = "easylist" | "easyprivacy";
+
 export interface RunOptions {
   model: string | null;
   effort: Effort | null;
   max_turns: number | null;
   headless: boolean;
   mode: Mode;
+  etp: EtpLevel;
+  easylist: boolean;
+  easyprivacy: boolean;
+  private: boolean;
   build: boolean;
+}
+
+/** One target configuration; a batch queues a run per bug and configuration. */
+export interface TargetConfig {
+  etp: EtpLevel;
+  easylist: boolean;
+  easyprivacy: boolean;
+  private: boolean;
 }
 
 export interface RunParams extends Partial<RunOptions> {
@@ -74,10 +91,16 @@ export interface ProposedShim {
 export interface EtpResult {
   summary: string;
   failure_reason: string | null;
-  broken_in_standard: boolean | null;
-  broken_in_strict: boolean | null;
-  broken_with_easyprivacy?: boolean | null;
-  broken_with_easylist?: boolean | null;
+  broken_in_baseline?: boolean | null;
+  broken_in_target?: boolean | null;
+  /** Runs from before the baseline/target split. */
+  broken_in_standard?: boolean | null;
+  broken_in_strict?: boolean | null;
+  etp?: EtpLevel;
+  filter_lists?: FilterList[];
+  private?: boolean;
+  filter_list_versions?: Partial<Record<FilterList, string>> | null;
+  broken_without_lists?: boolean | null;
   culprit_prefs: string[];
   blocked_resources: string[];
   proposed_exceptions: ProposedException[];
@@ -139,6 +162,27 @@ export interface Review {
   draft: Draft;
 }
 
+/** One run of a bug, as the compare view lists it. */
+export interface CompareRow {
+  run_id: string;
+  status: RunStatus;
+  params: RunParams;
+  cost: number | null;
+  started: number | null;
+  has_result: boolean;
+  etp: EtpLevel | null;
+  private: boolean | null;
+  filter_lists: FilterList[] | null;
+  filter_list_versions: Partial<Record<FilterList, string>> | null;
+  failure_reason: string | null;
+  broken_in_baseline: boolean | null;
+  broken_in_target: boolean | null;
+  broken_without_lists: boolean | null;
+  blocked_trackers: Record<string, number>;
+  screenshots: Record<string, string>;
+  screenshot_labels: Record<string, string>;
+}
+
 export interface ListedBug {
   id: number;
   summary: string;
@@ -191,8 +235,11 @@ export const api = {
   whoami: () => request<WhoAmI>("/api/whoami"),
   runs: () => request<RunInfo[]>("/api/runs"),
   startRun: (params: RunParams) => post<RunInfo>("/api/runs", params),
-  startBatch: (body: RunOptions & { bug_ids: number[] }) =>
-    post<RunInfo[]>("/api/runs/batch", body),
+  startBatch: (
+    body: RunOptions & { bug_ids: number[]; configs?: TargetConfig[] }
+  ) => post<RunInfo[]>("/api/runs/batch", body),
+  compare: (bugId: number) =>
+    request<CompareRow[]>(`/api/bugs/${bugId}/compare`),
   cancel: (runId: string) => post<RunInfo>(`${runPath(runId)}/cancel`),
   review: (runId: string) => request<Review>(`${runPath(runId)}/review`),
   apply: (runId: string, body: ApplyRequest) =>

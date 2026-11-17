@@ -3,6 +3,7 @@ import { useSnapshot } from "valtio";
 
 import { startRun } from "../actions";
 import { store } from "../store";
+import { ConfigsToCompare } from "./ConfigsToCompare";
 import { RunOptionsFields } from "./RunOptionsFields";
 
 export function StartForm() {
@@ -33,6 +34,7 @@ export function StartForm() {
         />
       </details>
       <RunOptionsFields options={start.options} />
+      <ConfigsToCompare options={start.options} configs={start.configs} />
       {snap.error && <div className="note err">{snap.error}</div>}
       <button type="submit" className="wide" disabled={snap.busy}>
         Start run
