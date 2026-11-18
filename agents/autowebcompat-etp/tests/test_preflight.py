@@ -131,8 +131,11 @@ def test_error_page_reason(uri, error, code, reason, summary):
 
 
 def fake_session(document_uri, code=None, navigate_error=False, states=()):
-    """`states`: extra page-state fields, one dict per evaluate_script call
-    (the last one repeats)."""
+    """Fake an MCP session whose page ends on `document_uri`.
+
+    `states` holds extra page-state fields, one dict per evaluate_script call
+    (the last one repeats).
+    """
     remaining = list(states)
 
     def call_tool(name, args):
@@ -146,7 +149,9 @@ def fake_session(document_uri, code=None, navigate_error=False, states=()):
                 else {}
             )
             state = {"uri": document_uri, "code": code} | extra
-            result.content[0].text = (
+            result.content[
+                0
+            ].text = (
                 f"Script ran on page and returned:\n```json\n{json.dumps(state)}\n```"
             )
         elif name == "screenshot_page":
