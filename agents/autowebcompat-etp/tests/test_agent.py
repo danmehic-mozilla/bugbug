@@ -585,6 +585,7 @@ def test_run_records_effective_exceptions(tmp_path, monkeypatch, kwargs, expecte
     monkeypatch.setattr(
         agent.EtpInvestigation, "run", mock.AsyncMock(return_value=make_result(GLOBAL))
     )
+    monkeypatch.setattr(agent, "preflight", mock.AsyncMock(return_value=None))
 
     final = asyncio.run(
         agent.run_autowebcompat_etp(

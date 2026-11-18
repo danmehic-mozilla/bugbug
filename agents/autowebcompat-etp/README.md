@@ -215,6 +215,13 @@ level's default, Strict: baseline only, Standard and Off: both), `MODE`
 (`investigate`, or `retest` to rerun with the ETP exception list off, the same
 as `EXCEPTIONS_BASELINE=false`), `MODEL`, `EFFORT`, `MAX_TURNS` and `HEADLESS`.
 
+Before the agent starts, the run loads the bug's URL field (or the first URL in
+`BUG_DATA`) once in Firefox. If Firefox shows its own error page for it (a
+certificate error, DNS or connection failure, blocked site), the run stops
+there, at no model cost, with `failure_reason` `down` (the site can't be
+reached) or `other`, and a `[preflight]` line in the output says why.
+`PREFLIGHT=false` skips this check.
+
 In Docker, from the repo root with the `.env` from step 3:
 
 ```sh

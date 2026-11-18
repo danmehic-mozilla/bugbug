@@ -35,6 +35,7 @@ from .exceptions import (
     pattern_host,
 )
 from .mcp_servers import build_firefox_devtools_server
+from .preflight import preflight
 from .result import (
     RESULT_SERVER_NAME,
     ClassifierFeature,
@@ -530,13 +531,16 @@ async def run_autowebcompat_etp(
     private: bool = False,
     exceptions_baseline: bool | None = None,
     exceptions_convenience: bool | None = None,
+    run_preflight: bool = True,
 ) -> AutowebcompatEtpResult:
     """Investigate an ETP breakage report and return the proposed fix.
 
     `exceptions_baseline` and `exceptions_convenience` turn that category of
     the ETP exception list on or off in every configuration; None keeps the
     ETP level's default. `retest` mode turns baseline off. With `private`,
-    every configuration is tested in a private window.
+    every configuration is tested in a private window. With `run_preflight`,
+    the URL is loaded first, and a site Firefox shows an error page for ends
+    the run without starting the agent.
 
     Raises :class:`AgentError` if the agent ends in an error.
     """
@@ -564,7 +568,16 @@ async def run_autowebcompat_etp(
             exceptions_baseline,
             exceptions_convenience,
         )
-        result = await investigation.run()
+        stopped = (
+            await preflight(
+                input_data,
+                investigation.mcp_servers["firefox-devtools"],
+                investigation.screenshot_paths["baseline"],
+            )
+            if run_preflight
+            else None
+        )
+        result = stopped if stopped is not None else await investigation.run()
 
     records = exception_records(result, input_data)
     whiteboard_tags, user_story_lines = bug_tags(result)

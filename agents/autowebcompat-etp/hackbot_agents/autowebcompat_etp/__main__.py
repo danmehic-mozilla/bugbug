@@ -50,6 +50,9 @@ class AgentInputs(BaseSettings):
     # Off: both). `retest` mode means baseline off.
     exceptions_baseline: bool | None = None
     exceptions_convenience: bool | None = None
+    # Load the URL before starting the agent, and stop if Firefox shows an
+    # error page for it.
+    preflight: bool = True
 
     model_config = SettingsConfigDict(extra="ignore")
 
@@ -98,6 +101,7 @@ async def main(ctx: HackbotContext) -> AutowebcompatResult:
         private=inputs.private,
         exceptions_baseline=inputs.exceptions_baseline,
         exceptions_convenience=inputs.exceptions_convenience,
+        run_preflight=inputs.preflight,
     )
     end_time = datetime.now()
 
