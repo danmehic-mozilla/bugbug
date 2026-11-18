@@ -142,6 +142,9 @@ def configs(result: dict[str, Any] | None) -> tuple[str, str]:
     return describe_config("standard" if etp == "strict" else "off"), target
 
 
+# Where Docker runs keep the day's Firefox Nightly (see compose.yml).
+FIREFOX_CACHE_DIR = Path.home() / "hackbot" / "firefox-cache"
+
 # How many agent runs execute at once; the rest wait in the queue.
 MAX_PARALLEL = int(os.environ.get("MAX_PARALLEL", "1"))
 
@@ -538,6 +541,9 @@ def execute(run: Run) -> None:
         )
         shown = cmd
         cwd = REPO_ROOT
+        # compose.yml mounts it; created here so it belongs to this user, not
+        # to root as a directory Docker creates would.
+        FIREFOX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     shown = [arg if not arg.startswith("BUG_DATA=") else "BUG_DATA=…" for arg in shown]
     run.add_line(f"$ {' '.join(shown)}")
 

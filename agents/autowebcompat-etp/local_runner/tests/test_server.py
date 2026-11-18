@@ -40,6 +40,7 @@ def isolated(tmp_path, monkeypatch):
     artifacts.mkdir()
     monkeypatch.setattr(server, "ARTIFACTS_ROOT", artifacts)
     monkeypatch.setattr(server, "FILTER_LISTS_DIR", tmp_path / "filter-lists")
+    monkeypatch.setattr(server, "FIREFOX_CACHE_DIR", tmp_path / "firefox-cache")
     monkeypatch.setattr(server, "LOCAL_FIREFOX", None)
     monkeypatch.setattr(server, "PORT", 8123)
     monkeypatch.setattr(server, "RUNS", {})

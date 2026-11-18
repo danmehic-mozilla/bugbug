@@ -45,6 +45,9 @@ The server only answers requests addressed to `127.0.0.1`, `localhost` or
 web page open in your browser can't start runs or post to Bugzilla through it.
 If you reach the server under another name, add it to `ALLOWED_HOSTS`.
 
+Docker runs keep the day's Firefox Nightly in `~/hackbot/firefox-cache`, so
+only the first run of a day downloads it.
+
 `compose.yml` always mounts `~/hackbot/artifacts` into the agent container. If
 you change `HACKBOT_ARTIFACTS`, the server will look somewhere the agent does
 not write to.

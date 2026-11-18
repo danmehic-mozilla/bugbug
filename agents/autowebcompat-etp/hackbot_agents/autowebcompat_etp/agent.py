@@ -24,7 +24,7 @@ from autowebcompat_tools.task import RunTracker, Task, TaskConfig
 from claude_agent_sdk import McpServerConfig
 from pydantic import model_validator
 
-from .browser import firefox_binary
+from .browser import firefox_binary, firefox_build
 from .config import BUGZILLA_READ_TOOLS, DEVTOOLS_TOOLS, PRIVILEGED_TOOLS
 from .exceptions import (
     EXCEPTIONS_SERVER_NAME,
@@ -212,6 +212,10 @@ class AutowebcompatEtpResult(EtpInvestigationResult):
     exceptions_convenience: bool | None = None
     # The `! Version:` header of each filter list set_etp_mode loaded, by list.
     filter_list_versions: dict[str, str] | None = None
+    # The Firefox the run drove (None if its application.ini couldn't be read,
+    # and in runs from before they were recorded).
+    firefox_version: str | None = None
+    firefox_build_id: str | None = None
 
     @model_validator(mode="after")
     def validate_blocked_trackers_have_screenshots(self) -> AutowebcompatEtpResult:
@@ -550,6 +554,8 @@ async def run_autowebcompat_etp(
             env.start_xvfb()
 
         firefox_path = firefox_binary()
+        firefox_version, firefox_build_id = firefox_build(firefox_path)
+        logger.info("Firefox %s, build %s", firefox_version, firefox_build_id)
         screenshot_dir = Path(tempfile.mkdtemp(prefix="autowebcompat-etp-screenshots-"))
         log_dir = Path(tempfile.mkdtemp(prefix="autowebcompat-etp-logs-"))
         content_blocking_log_file = log_dir / CONTENT_BLOCKING_LOG_FILE
@@ -602,4 +608,6 @@ async def run_autowebcompat_etp(
         filter_list_versions=read_filter_list_versions(
             content_blocking_log_file, filter_lists
         ),
+        firefox_version=firefox_version,
+        firefox_build_id=firefox_build_id,
     )
