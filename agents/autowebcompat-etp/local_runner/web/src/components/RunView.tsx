@@ -60,6 +60,7 @@ export function RunView() {
         }}
       >
         <summary>Output ({run.lines.length} lines)</summary>
+        <CopyButton text={run.lines.join("\n")} label="copy output" />
         <LogView lines={run.lines} />
       </details>
       {run.reviewError && (
