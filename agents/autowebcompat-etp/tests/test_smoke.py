@@ -156,7 +156,7 @@ async def drive(server, url: str) -> dict[str, str]:
     ):
         await session.initialize()
         tools = {tool.name for tool in (await session.list_tools()).tools}
-        assert ETP_TOOLS <= tools
+        assert tools >= ETP_TOOLS
 
         async def call(name: str, args: dict) -> str:
             result = await session.call_tool(name, args)
