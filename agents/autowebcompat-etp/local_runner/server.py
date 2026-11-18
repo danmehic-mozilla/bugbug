@@ -463,6 +463,7 @@ def execute(run: Run) -> None:
     shown = [arg if not arg.startswith("BUG_DATA=") else "BUG_DATA=…" for arg in shown]
     run.add_line(f"$ {' '.join(shown)}")
 
+    docker_down = False
     try:
         run.process = subprocess.Popen(
             cmd,
@@ -475,7 +476,12 @@ def execute(run: Run) -> None:
         )
         assert run.process.stdout is not None
         for raw in run.process.stdout:
-            run.add_line(raw.decode("utf-8", "replace").rstrip("\n"))
+            line = raw.decode("utf-8", "replace").rstrip("\n")
+            run.add_line(line)
+            if "failed to connect to the docker API" in line or (
+                "Cannot connect to the Docker daemon" in line
+            ):
+                docker_down = True
         code = run.process.wait()
     except Exception as exc:
         run.add_line(f"[runner] failed to run docker compose: {exc}")
@@ -487,6 +493,9 @@ def execute(run: Run) -> None:
             (summary or {}).get("status")
             or (RunStatus.OK if code == 0 else RunStatus.ERROR)
         )
+    if docker_down:
+        run.add_line("[runner] ERROR: the Docker daemon is not running.")
+        run.add_line("[runner] Start Docker Desktop (or `colima start`) and run again.")
     run.add_line(f"[runner] exited with code {code}, status {run.status}")
     with run.changed:
         run.finished = time.time()
@@ -835,7 +844,10 @@ def bug_summary(bug_id: int) -> str:
         if time.time() - cached[0] < SUMMARY_TTL:
             return cached[1]
     data = bugzilla(
-        "GET", f"bug/{bug_id}", params={"include_fields": "summary"}, auth_required=False
+        "GET",
+        f"bug/{bug_id}",
+        params={"include_fields": "summary"},
+        auth_required=False,
     )
     if not data.get("bugs"):
         raise HTTPException(404, f"no bug {bug_id}")
@@ -1269,12 +1281,46 @@ def exit_on_signal(signum: int, frame: object) -> None:
     raise SystemExit(128 + signum)
 
 
+def setup_problems() -> list[str]:
+    """Quick-start steps that look skipped. The server starts regardless."""
+    problems = []
+    if not WEB_DIST.is_dir():
+        problems.append(
+            "The UI isn't built (step 4). Run: "
+            "pnpm --dir agents/autowebcompat-etp/local_runner/web install "
+            "--frozen-lockfile && pnpm --dir "
+            "agents/autowebcompat-etp/local_runner/web build"
+        )
+    if not ENV_FILE.exists():
+        problems.append(f"No .env file at {ENV_FILE} (step 3).")
+    for key in ("ANTHROPIC_API_KEY", "BUGZILLA_API_KEY"):
+        if not os.environ.get(key):
+            problems.append(f"{key} is not set (step 3).")
+    if not LOCAL_FIREFOX:
+        try:
+            docker = subprocess.run(
+                ["docker", "info"], capture_output=True, timeout=15, check=False
+            )
+            running = docker.returncode == 0
+        except OSError, subprocess.TimeoutExpired:
+            running = False
+        if not running:
+            problems.append(
+                "The Docker engine isn't running, so runs will fail (step 5a). "
+                "Start Docker Desktop or run `colima start`, or set "
+                "LOCAL_FIREFOX to use your own build."
+            )
+    return problems
+
+
 if __name__ == "__main__":
     # uvicorn shuts down on SIGTERM/SIGHUP, restores the handlers it found and
     # re-raises the signal. With the default handlers that kills the process
     # before `finally` runs and leaves the broker behind; these exit through it.
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, exit_on_signal)
+    for problem in setup_problems():
+        print(f"WARNING: {problem}", file=sys.stderr)
     broker = start_broker() if LOCAL_FIREFOX else None
     try:
         uvicorn.run(
