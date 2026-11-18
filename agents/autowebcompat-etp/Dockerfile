@@ -1,6 +1,8 @@
-FROM python:3.14 AS builder
+# Pinned by digest so two builds of the same commit give the same image. To
+# update, take the digests from `docker buildx imagetools inspect <image>:<tag>`.
+FROM python:3.14.10@sha256:e5de6bc932256f8138c2353023dc4fd24d010d72f6b5cb06be126f0a4cd53784 AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.9@sha256:d3b601f0c7b118bc1753febf7c41cc80981df678445e0254284eecf84db79a7d /uv /uvx /bin/
 
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 ENV UV_PYTHON_DOWNLOADS=never
@@ -18,7 +20,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,target=/app,rw \
     uv sync --locked --no-dev --no-editable --package hackbot-agent-autowebcompat-etp
 
-FROM python:3.14 AS base
+FROM python:3.14.10@sha256:e5de6bc932256f8138c2353023dc4fd24d010d72f6b5cb06be126f0a4cd53784 AS base
 
 WORKDIR /app
 
