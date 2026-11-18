@@ -14,6 +14,24 @@ shim.
   Bugzilla. See [local_runner/README.md](local_runner/README.md).
 - `tests/`: agent tests
 
+## Setting up with a coding agent
+
+The Quick start below can be done by a coding agent such as Claude Code, except
+for the secrets and the browser steps. An agent should:
+
+1. Run steps 1, 2 and 4, and check the tools. If `docker info` fails, stop and
+   tell the user to start Docker Desktop or run `colima start`. Don't start it
+   unasked.
+2. Stop at step 3 and ask the user to create `.env` themselves. Never create,
+   read, print or log `.env`, and never ask for the keys in the chat.
+3. Start the server (step 5a) in the background, with its output redirected to
+   a log file outside the repo. Don't run it in the foreground.
+4. Verify with `curl -s http://127.0.0.1:8000/api/config`. Report only whether
+   `has_anthropic_key` and `has_bugzilla_key` are `true`.
+5. Tell the user to open <http://127.0.0.1:8000>. Steps 6 and 7 (running a bug,
+   reviewing and posting to Bugzilla) are for the user. Never post to Bugzilla
+   or start a run unasked, because each run costs money.
+
 ## Quick start
 
 These steps take you from nothing to a finished run in the local runner UI. Run
@@ -27,30 +45,45 @@ every command from the repo root unless a step says otherwise.
 - **[Node.js](https://nodejs.org/) 20 or newer** and
   **[pnpm](https://pnpm.io/installation)**, to build the UI
 - One way to run Firefox:
-  - **[Docker Desktop](https://www.docker.com/products/docker-desktop/)**: runs
-    download a fresh Firefox Nightly inside a container. Use this if you don't
-    build Firefox yourself.
+  - **Docker**: runs download a fresh Firefox Nightly inside a container. Use
+    this if you don't build Firefox yourself. Any engine works:
+    [Docker Desktop](https://www.docker.com/products/docker-desktop/), or
+    [Colima](https://github.com/abiosoft/colima) (`brew install colima docker
+    docker-compose`).
   - **Your own Firefox build**: see step 5b.
+
+On macOS with [Homebrew](https://brew.sh/), one command installs everything
+except Docker Desktop:
+
+```sh
+brew install git uv node pnpm colima docker docker-compose
+```
 
 Check them:
 
 ```sh
 git --version && uv --version && node --version && pnpm --version
-docker compose version   # only for Docker runs
+docker info > /dev/null && echo "docker engine running"   # only for Docker runs
 ```
+
+`docker info` fails if no engine is running (see step 5a). `docker compose
+version` alone passes even then, so it isn't a check.
 
 ### 2. Get the code
 
 ```sh
 git clone https://github.com/danmehic-mozilla/bugbug.git
 cd bugbug
-git checkout autowebcompat-etp-agent
 ```
+
+The agent is on the default branch, so there is nothing to check out.
 
 ### 3. Add your keys
 
 Create a file named `.env` in the repo root (the `bugbug` directory). Never
-commit it.
+commit it. You create and fill this file yourself. If a coding agent is helping
+you, it must not write, read or print it, and you must not paste the keys into
+the chat.
 
 ```dotenv
 ANTHROPIC_API_KEY=sk-ant-...
@@ -75,15 +108,30 @@ Run the build again whenever you pull changes to the UI.
 
 ### 5a. Start the runner with Docker
 
-Start Docker Desktop, then:
+Start the Docker engine first: open Docker Desktop, or with Colima run
+`colima start` (the default 2 GB of memory is tight for the image build, so
+`colima start --memory 8` is safer). Then:
 
 ```sh
 uv run --locked agents/autowebcompat-etp/local_runner/server.py
 ```
 
+If a run fails with "failed to connect to the docker API", the engine isn't
+running. If the image build dies with `error reading from server: EOF`, the VM
+was still starting or ran out of memory. Wait, or `colima restart`, and run
+again.
+
 Open <http://127.0.0.1:8000>. The first run builds the agent's Docker image,
 which takes a few minutes once. After you pull changes to the agent, tick
 **Rebuild image first** on the next run.
+
+The server stays in the foreground until you stop it. To check that it is up
+and sees your keys, run this in another terminal. Only the two `has_*` fields
+matter, and both should be `true`:
+
+```sh
+curl -s http://127.0.0.1:8000/api/config
+```
 
 ### 5b. Or start it with your own Firefox build
 

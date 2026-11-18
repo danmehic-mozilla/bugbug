@@ -38,7 +38,6 @@ export function RunOptionsFields({
   const native = !!localFirefox && snap.native !== false;
   const runIn = useId();
   const etpName = useId();
-  const modelList = useId();
   const modelName = models?.models.find((m) => m.id === snap.model);
   // Unchanged checkboxes follow Firefox's default for the level; convenience
   // needs baseline.
@@ -99,6 +98,14 @@ export function RunOptionsFields({
         />
         EasyPrivacy
       </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={snap.private}
+          onChange={(e) => (options.private = e.target.checked)}
+        />
+        Private Browsing Mode
+      </label>
       <div className="meta">
         <div>Runs load the runner's cached lists:</div>
         {filterLists.lists?.map((list) => (
@@ -130,19 +137,11 @@ export function RunOptionsFields({
       <label className="check">
         <input
           type="checkbox"
-          checked={snap.private}
-          onChange={(e) => (options.private = e.target.checked)}
-        />
-        Private Browsing Mode
-      </label>
-      <label className="check">
-        <input
-          type="checkbox"
           disabled={snap.etp === "off"}
           checked={baselineExceptions}
           onChange={(e) => (options.exceptions_baseline = e.target.checked)}
         />
-        Retest with baseline ETP exceptions
+        ETP exceptions: baseline
       </label>
       <label className="check">
         <input
@@ -151,7 +150,7 @@ export function RunOptionsFields({
           checked={convenienceExceptions}
           onChange={(e) => (options.exceptions_convenience = e.target.checked)}
         />
-        Retest with convenience ETP exceptions
+        ETP exceptions: convenience
       </label>
       {snap.etp !== "off" && !baselineExceptions && (
         <div className="note">
@@ -181,20 +180,20 @@ export function RunOptionsFields({
       <div className="row">
         <div>
           <label>Model</label>
-          <input
-            placeholder="default"
-            list={modelList}
+          <select
             value={snap.model ?? ""}
             onChange={(e) => (options.model = e.target.value || null)}
-          />
-          <datalist id={modelList}>
+          >
+            <option value="">default</option>
+            {snap.model && !modelName && (
+              <option value={snap.model}>{snap.model}</option>
+            )}
             {models?.models.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.display_name}
+                {m.display_name} ({m.id})
               </option>
             ))}
-          </datalist>
-          {modelName && <div className="meta">{modelName.display_name}</div>}
+          </select>
           {models?.fallback && (
             <div className="meta" title={models.error}>
               Couldn't list models; showing a fixed list.
