@@ -81,20 +81,25 @@ export function exceptionOverrides(config: ConfigParts) {
   };
 }
 
-/** How the ETP exceptions differ from the level's default, if they do. */
+/**
+ * Which ETP exceptions apply, also when they are the level's default: a label
+ * that only named the differences left the reader to know the defaults. Empty
+ * with ETP off, where nothing is blocked for an exception to lift.
+ */
 function exceptionLines(config: ConfigParts): string[] {
   if (!config.etp || config.etp === "off") return [];
   const [baseline, convenience] = appliedExceptions(config);
-  if (!baseline) return ["baseline exceptions off"];
-  if (convenience === defaultExceptions(config.etp)[1]) return [];
+  if (!baseline) return ["exceptions: off"];
   return [
-    convenience ? "+ convenience exceptions" : "convenience exceptions off",
+    convenience
+      ? "exceptions: baseline + convenience"
+      : "exceptions: baseline only",
   ];
 }
 
 /**
  * One line per part, e.g. ["ETP Strict", "+ EasyList", "+ Private Browsing
- * Mode", "+ convenience exceptions"]; empty when the run recorded no target.
+ * Mode", "exceptions: baseline only"]; empty when the run recorded no target.
  */
 export function configLines(config: ConfigParts): string[] {
   if (!config.etp) return [];
@@ -129,5 +134,6 @@ export function baselineConfig(target: ConfigParts): ConfigParts {
 
 /** The same on one line, e.g. "ETP Standard + EasyList + Private Browsing Mode". */
 export function configLabel(config: ConfigParts): string {
-  return configLines(config).join(" ");
+  // On one line the exceptions part needs a separator; the others start with "+".
+  return configLines(config).join(" ").replace(" exceptions:", ", exceptions:");
 }
