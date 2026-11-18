@@ -290,3 +290,19 @@ uv run --frozen --package hackbot-agent-autowebcompat-etp --with pytest \
 ```
 
 The local runner's tests are listed in its README.
+
+`tests/test_smoke.py` checks the patched DevTools MCP server against the real
+npm package and a real Firefox. It needs the network and a few minutes, so it
+only runs when asked for:
+
+```sh
+# Install the pinned package and apply mcp/patch-mcp.mjs (needs node and npm).
+ETP_SMOKE=1 uv run --frozen --package hackbot-agent-autowebcompat-etp \
+  --with pytest pytest -q agents/autowebcompat-etp/tests/test_smoke.py
+# Also drive a Firefox Nightly through the ETP tools.
+ETP_SMOKE=1 ETP_SMOKE_FIREFOX=/path/to/firefox uv run --frozen \
+  --package hackbot-agent-autowebcompat-etp --with pytest \
+  pytest -q agents/autowebcompat-etp/tests/test_smoke.py
+```
+
+Run it after changing `mcp/etp-tools.js` or bumping the package version.

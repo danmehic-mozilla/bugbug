@@ -46,18 +46,29 @@ export function RunOptionsFields({
   const convenienceExceptions =
     baselineExceptions && (snap.exceptions_convenience ?? defaultConvenience);
 
-  const maxTurns = (
+  const limit = (
+    label: string,
+    key: "max_turns" | "timeout_minutes",
+    fallback: number | null | undefined,
+  ) => (
     <div>
-      <label>Max turns</label>
+      <label>{label}</label>
       <input
         type="number"
-        placeholder="default"
-        value={snap.max_turns ?? ""}
+        min={1}
+        placeholder={fallback ? String(fallback) : "no limit"}
+        value={snap[key] ?? ""}
         onChange={(e) =>
-          (options.max_turns = e.target.value ? Number(e.target.value) : null)
+          (options[key] = e.target.value ? Number(e.target.value) : null)
         }
       />
     </div>
+  );
+  const maxTurns = limit("Max turns", "max_turns", config?.default_max_turns);
+  const timeout = limit(
+    "Timeout (min)",
+    "timeout_minutes",
+    config?.run_timeout_minutes,
   );
 
   return (
@@ -215,8 +226,14 @@ export function RunOptionsFields({
           </select>
         </div>
         {compact && maxTurns}
+        {compact && timeout}
       </div>
-      {!compact && maxTurns}
+      {!compact && (
+        <div className="row">
+          {maxTurns}
+          {timeout}
+        </div>
+      )}
       <label className="check">
         <input
           type="checkbox"

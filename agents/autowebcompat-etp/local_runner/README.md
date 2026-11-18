@@ -36,6 +36,17 @@ You can also set these optional environment variables:
 | `PORT`              | `8000`                | Port the server listens on               |
 | `MAX_PARALLEL`      | `1`                   | How many agent runs can execute at once  |
 | `HACKBOT_ARTIFACTS` | `~/hackbot/artifacts` | Where the server looks for run artifacts |
+| `DEFAULT_MAX_TURNS` | `100`                 | Turn limit of a run that sets none; `0` for no limit |
+| `RUN_TIMEOUT_MINUTES` | `30`                | Minutes before a run that sets no timeout is stopped; `0` for no limit |
+| `ALLOWED_HOSTS`     |                       | Extra host names the server answers to, comma-separated |
+
+The server only answers requests addressed to `127.0.0.1`, `localhost` or
+`host.docker.internal`, and refuses writes from pages of any other origin, so a
+web page open in your browser can't start runs or post to Bugzilla through it.
+If you reach the server under another name, add it to `ALLOWED_HOSTS`.
+
+Docker runs keep the day's Firefox Nightly in `~/hackbot/firefox-cache`, so
+only the first run of a day downloads it.
 
 `compose.yml` always mounts `~/hackbot/artifacts` into the agent container. If
 you change `HACKBOT_ARTIFACTS`, the server will look somewhere the agent does

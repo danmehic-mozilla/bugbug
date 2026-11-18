@@ -189,6 +189,15 @@ export function ResultView() {
               </dd>
             </>
           )}
+          {result.firefox_build_id && (
+            <>
+              <dt>Firefox</dt>
+              <dd>
+                {result.firefox_version} (build{" "}
+                <code>{result.firefox_build_id}</code>)
+              </dd>
+            </>
+          )}
           <dt>Severity / priority</dt>
           <dd>
             {result.severity ?? "—"} / {result.priority ?? "—"}

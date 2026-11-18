@@ -25,6 +25,8 @@ export interface RunOptions {
   model: string | null;
   effort: Effort | null;
   max_turns: number | null;
+  /** Minutes before the runner stops the run; null: the server's default. */
+  timeout_minutes: number | null;
   headless: boolean;
   etp: EtpLevel;
   easylist: boolean;
@@ -75,6 +77,9 @@ export interface Config {
   has_anthropic_key: boolean;
   has_bugzilla_key: boolean;
   max_parallel: number;
+  /** Limits for a run that sets none; null: no limit. */
+  default_max_turns: number | null;
+  run_timeout_minutes: number | null;
   local_firefox: string | null;
   query_urls: Record<BugQuery, string>;
 }
@@ -140,6 +145,9 @@ export interface EtpResult {
   exceptions_baseline?: boolean | null;
   exceptions_convenience?: boolean | null;
   filter_list_versions?: Partial<Record<FilterList, string>> | null;
+  /** The Firefox the run drove (absent in older runs). */
+  firefox_version?: string | null;
+  firefox_build_id?: string | null;
   broken_without_lists?: boolean | null;
   culprit_prefs: string[];
   blocked_resources: string[];

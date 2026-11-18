@@ -24,6 +24,7 @@ export const DEFAULT_OPTIONS: RunOptions = {
   model: null,
   effort: null,
   max_turns: null,
+  timeout_minutes: null,
   headless: false,
   etp: "strict",
   easylist: false,
