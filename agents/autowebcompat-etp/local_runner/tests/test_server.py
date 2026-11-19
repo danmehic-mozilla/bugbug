@@ -48,6 +48,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "RUN_QUEUE", queue.Queue())
     monkeypatch.setattr(server, "MODELS_CACHE", None)
     monkeypatch.setattr(server, "SUMMARY_CACHE", {})
+    monkeypatch.setattr(server, "docker_running", lambda: True)
     return artifacts
 
 
@@ -760,3 +761,64 @@ def test_config_reports_the_run_limits(client, monkeypatch):
     config = client.get("/api/config").json()
     assert config["default_max_turns"] == 70
     assert config["run_timeout_minutes"] is None
+
+
+# --- setup problems and failure hints --------------------------------------------
+
+
+def test_config_reports_setup_problems(client, monkeypatch):
+    monkeypatch.setattr(server, "docker_running", lambda: False)
+    problems = client.get("/api/config").json()["setup_problems"]
+    assert any("Docker engine isn't running" in p for p in problems)
+
+
+def test_native_problems(tmp_path, monkeypatch):
+    package = tmp_path / "node_modules" / "@mozilla" / "firefox-devtools-mcp-moz"
+    monkeypatch.setattr(server, "MCP_PACKAGE_DIR", package)
+    monkeypatch.setattr(server, "LOCAL_FIREFOX", str(tmp_path / "missing"))
+    problems = server.native_problems()
+    assert "not an executable file" in problems[0]
+    assert "isn't installed" in problems[1]
+
+    firefox = tmp_path / "firefox"
+    firefox.write_text("")
+    firefox.chmod(0o755)
+    monkeypatch.setattr(server, "LOCAL_FIREFOX", str(firefox))
+    (tmp_path / "node_modules" / ".bin").mkdir(parents=True)
+    (tmp_path / "node_modules" / ".bin" / server.MCP_BIN).write_text("")
+    (package / "dist.moz").mkdir(parents=True)
+    (package / server.MCP_BUNDLE).write_text("unpatched")
+    [problem] = server.native_problems()
+    assert "without the ETP tools" in problem
+
+    (package / server.MCP_BUNDLE).write_text(server.MCP_PATCH_MARKER)
+    assert server.native_problems() == []
+
+
+class FailingPopen(FakePopen):
+    def __init__(self, cmd, **kwargs):
+        super().__init__(cmd, **kwargs)
+        self.stdout = [b"target agent: failed to solve: process did not complete\n"]
+
+    def wait(self):
+        return 17
+
+
+def test_failed_image_build_is_explained(monkeypatch):
+    FakePopen.calls = []
+    monkeypatch.setattr(server.subprocess, "Popen", FailingPopen)
+    run, _, _ = execute({"bug_id": 1})
+    errors = [line for line in run.lines if "[runner] ERROR" in line]
+    assert len(errors) == 1
+    assert "image failed to build" in errors[0]
+
+
+def test_early_exit_without_a_hint_is_flagged(monkeypatch):
+    class ExitPopen(FakePopen):
+        def wait(self):
+            return 3
+
+    FakePopen.calls = []
+    monkeypatch.setattr(server.subprocess, "Popen", ExitPopen)
+    run, _, _ = execute({"bug_id": 1})
+    assert any("exited with code 3 before writing a result" in x for x in run.lines)

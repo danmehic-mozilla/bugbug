@@ -81,6 +81,8 @@ export interface Config {
   default_max_turns: number | null;
   run_timeout_minutes: number | null;
   local_firefox: string | null;
+  /** Setup steps that look skipped or broken; empty when setup is complete. */
+  setup_problems: string[];
   query_urls: Record<BugQuery, string>;
 }
 
