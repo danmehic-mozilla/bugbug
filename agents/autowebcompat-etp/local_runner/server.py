@@ -69,6 +69,12 @@ WEB_DIST = HERE / "web" / "dist"
 AGENT_DIR = HERE.parent
 REPO_ROOT = AGENT_DIR.parent.parent
 COMPOSE_FILE = AGENT_DIR / "compose.yml"
+# The DevTools MCP a native run starts, and the text mcp/patch-mcp.mjs adds to
+# its bundle.
+MCP_PACKAGE_DIR = AGENT_DIR / "node_modules" / "@mozilla" / "firefox-devtools-mcp-moz"
+MCP_BIN = "firefox-devtools-mcp-moz"
+MCP_BUNDLE = Path("dist.moz") / "index.js"
+MCP_PATCH_MARKER = "async function etpRunChrome("
 ENV_FILE = REPO_ROOT / ".env"
 SERVICE = "autowebcompat-etp-agent"
 
@@ -490,6 +496,38 @@ def time_out(run: Run, minutes: int) -> None:
     stop_process(run)
 
 
+# Output lines that name a setup problem, and what to tell the user about it.
+FAILURE_HINTS: list[tuple[tuple[str, ...], str]] = [
+    (
+        ("failed to connect to the docker API", "Cannot connect to the Docker daemon"),
+        "the Docker engine is not running. Start Docker Desktop (or "
+        "`colima start`) and run again.",
+    ),
+    (
+        ("error reading from server: EOF",),
+        "the Docker VM went away during the image build, usually because it ran "
+        "out of memory or was still starting. Run `colima restart` (or `colima "
+        "start --memory 8`) and run again.",
+    ),
+    (
+        ("failed to solve",),
+        "the agent's Docker image failed to build; the build output above says "
+        "why. Fix it, then tick Rebuild image first.",
+    ),
+    (
+        ("MCP server binary not found",),
+        "the DevTools MCP isn't installed for local-build runs. Run: cd "
+        "agents/autowebcompat-etp && npm ci --omit=dev && node "
+        "mcp/patch-mcp.mjs node_modules/@mozilla/firefox-devtools-mcp-moz",
+    ),
+    (
+        ("Process unexpectedly closed",),
+        "Firefox exited at startup. Run the binary by hand to see why; a local "
+        "build that no longer matches its checkout is the usual cause.",
+    ),
+]
+
+
 def execute(run: Run) -> None:
     params = run.params
     agent_env = {"RUN_ID": run.run_id}
@@ -513,7 +551,13 @@ def execute(run: Run) -> None:
             run.add_line(
                 f"[runner] fetching {', '.join(missing)} into {FILTER_LISTS_DIR}"
             )
-            fetch_filter_lists(missing)
+            try:
+                fetch_filter_lists(missing)
+            except (requests.RequestException, ValueError, OSError) as exc:
+                raise RuntimeError(
+                    f"could not fetch {', '.join(missing)} into "
+                    f"{FILTER_LISTS_DIR}: {exc}"
+                ) from exc
         agent_env["ETP_FILTER_LIST_BASE_URL"] = filter_list_base_url(params)
 
     # compose.yml passes the rest through from the host environment.
@@ -547,7 +591,7 @@ def execute(run: Run) -> None:
     shown = [arg if not arg.startswith("BUG_DATA=") else "BUG_DATA=…" for arg in shown]
     run.add_line(f"$ {' '.join(shown)}")
 
-    docker_down = False
+    hints: list[str] = []
     minutes = params.get("timeout_minutes") or RUN_TIMEOUT_MINUTES
     timer = threading.Timer(minutes * 60, time_out, (run, minutes)) if minutes else None
     try:
@@ -567,13 +611,12 @@ def execute(run: Run) -> None:
         for raw in run.process.stdout:
             line = raw.decode("utf-8", "replace").rstrip("\n")
             run.add_line(line)
-            if "failed to connect to the docker API" in line or (
-                "Cannot connect to the Docker daemon" in line
-            ):
-                docker_down = True
+            for needles, hint in FAILURE_HINTS:
+                if hint not in hints and any(n in line for n in needles):
+                    hints.append(hint)
         code = run.process.wait()
     except Exception as exc:
-        run.add_line(f"[runner] failed to run docker compose: {exc}")
+        run.add_line(f"[runner] ERROR: could not start {cmd[0]}: {exc}")
         code = -1
     finally:
         if timer is not None:
@@ -587,9 +630,16 @@ def execute(run: Run) -> None:
             (summary or {}).get("status")
             or (RunStatus.OK if code == 0 else RunStatus.ERROR)
         )
-    if docker_down:
-        run.add_line("[runner] ERROR: the Docker daemon is not running.")
-        run.add_line("[runner] Start Docker Desktop (or `colima start`) and run again.")
+    for hint in hints:
+        run.add_line(f"[runner] ERROR: {hint}")
+    exited_early = code not in (0, -1) and summary is None
+    if exited_early and not (
+        hints or run.timed_out or run.status == RunStatus.CANCELLED
+    ):
+        run.add_line(
+            f"[runner] ERROR: the agent exited with code {code} before writing "
+            "a result; the cause is in the output above."
+        )
     run.add_line(f"[runner] exited with code {code}, status {run.status}")
     with run.changed:
         run.finished = time.time()
@@ -610,7 +660,7 @@ def worker() -> None:
             execute(run)
         except Exception as exc:
             run.status = RunStatus.ERROR
-            run.add_line(f"[runner] {exc}")
+            run.add_line(f"[runner] ERROR: {exc}")
             with run.changed:
                 run.finished = time.time()
                 run.changed.notify_all()
@@ -965,6 +1015,7 @@ def config() -> dict[str, Any]:
         "default_max_turns": DEFAULT_MAX_TURNS or None,
         "run_timeout_minutes": RUN_TIMEOUT_MINUTES or None,
         "local_firefox": LOCAL_FIREFOX,
+        "setup_problems": setup_problems(),
         "query_urls": {
             name: f"{BUGZILLA_ROOT}/buglist.cgi?query_format=advanced&"
             + requests.compat.urlencode(query, doseq=True)
@@ -1373,6 +1424,44 @@ def exit_on_signal(signum: int, frame: object) -> None:
     raise SystemExit(128 + signum)
 
 
+def docker_running() -> bool:
+    try:
+        docker = subprocess.run(
+            ["docker", "info"], capture_output=True, timeout=15, check=False
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return False
+    return docker.returncode == 0
+
+
+def native_problems() -> list[str]:
+    """What keeps local-build runs (step 5b) from starting."""
+    problems = []
+    firefox = Path(LOCAL_FIREFOX or "")
+    if not firefox.is_file() or not os.access(firefox, os.X_OK):
+        problems.append(
+            f"LOCAL_FIREFOX={LOCAL_FIREFOX} is not an executable file. Point it at "
+            "the build's firefox binary (step 5b)."
+        )
+    install = (
+        "Run: cd agents/autowebcompat-etp && npm ci --omit=dev && node "
+        "mcp/patch-mcp.mjs node_modules/@mozilla/firefox-devtools-mcp-moz"
+    )
+    if not (MCP_PACKAGE_DIR.parent.parent / ".bin" / MCP_BIN).exists():
+        problems.append(f"The DevTools MCP isn't installed (step 5b). {install}")
+    else:
+        try:
+            patched = MCP_PATCH_MARKER in (MCP_PACKAGE_DIR / MCP_BUNDLE).read_text()
+        except OSError:
+            patched = False
+        if not patched:
+            problems.append(
+                f"The DevTools MCP is installed without the ETP tools (step 5b). "
+                f"{install}"
+            )
+    return problems
+
+
 def setup_problems() -> list[str]:
     """Quick-start steps that look skipped. The server starts regardless."""
     problems = []
@@ -1388,20 +1477,14 @@ def setup_problems() -> list[str]:
     for key in ("ANTHROPIC_API_KEY", "BUGZILLA_API_KEY"):
         if not os.environ.get(key):
             problems.append(f"{key} is not set (step 3).")
-    if not LOCAL_FIREFOX:
-        try:
-            docker = subprocess.run(
-                ["docker", "info"], capture_output=True, timeout=15, check=False
-            )
-            running = docker.returncode == 0
-        except OSError, subprocess.TimeoutExpired:
-            running = False
-        if not running:
-            problems.append(
-                "The Docker engine isn't running, so runs will fail (step 5a). "
-                "Start Docker Desktop or run `colima start`, or set "
-                "LOCAL_FIREFOX to use your own build."
-            )
+    if LOCAL_FIREFOX:
+        problems += native_problems()
+    elif not docker_running():
+        problems.append(
+            "The Docker engine isn't running, so runs will fail (step 5a). "
+            "Start Docker Desktop or run `colima start`, or set "
+            "LOCAL_FIREFOX to use your own build."
+        )
     return problems
 
 
@@ -1411,8 +1494,11 @@ if __name__ == "__main__":
     # before `finally` runs and leaves the broker behind; these exit through it.
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, exit_on_signal)
-    for problem in setup_problems():
+    problems = setup_problems()
+    for problem in problems:
         print(f"WARNING: {problem}", file=sys.stderr)
+    if not problems:
+        print("Setup check passed.", file=sys.stderr)
     broker = start_broker() if LOCAL_FIREFOX else None
     try:
         uvicorn.run(

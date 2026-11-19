@@ -32,6 +32,11 @@ def firefox_binary() -> Path:
     reused by the runs after it.
     """
     if local := os.environ.get("LOCAL_FIREFOX"):
+        if not os.access(local, os.X_OK) or not Path(local).is_file():
+            raise FileNotFoundError(
+                f"LOCAL_FIREFOX={local} is not an executable file; point it at "
+                "the build's firefox binary"
+            )
         logger.info("using the local Firefox at %s", local)
         return Path(local)
     if cache := os.environ.get("FIREFOX_CACHE_DIR"):

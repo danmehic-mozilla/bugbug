@@ -115,7 +115,17 @@ def test_firefox_binary_without_a_usable_cache(tmp_path, install, monkeypatch):
 
 
 def test_firefox_binary_prefers_a_local_build(tmp_path, install, monkeypatch):
-    monkeypatch.setenv("LOCAL_FIREFOX", "/builds/firefox")
+    local = tmp_path / "firefox"
+    local.write_text("")
+    local.chmod(0o755)
+    monkeypatch.setenv("LOCAL_FIREFOX", str(local))
     monkeypatch.setenv("FIREFOX_CACHE_DIR", str(tmp_path))
-    assert browser.firefox_binary() == Path("/builds/firefox")
+    assert browser.firefox_binary() == local
+    assert not install
+
+
+def test_firefox_binary_rejects_a_missing_local_build(tmp_path, install, monkeypatch):
+    monkeypatch.setenv("LOCAL_FIREFOX", str(tmp_path / "missing"))
+    with pytest.raises(FileNotFoundError, match="not an executable file"):
+        browser.firefox_binary()
     assert not install

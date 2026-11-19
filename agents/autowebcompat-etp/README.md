@@ -17,20 +17,50 @@ shim.
 ## Setting up with a coding agent
 
 The Quick start below can be done by a coding agent such as Claude Code, except
-for the secrets and the browser steps. An agent should:
+for the secrets and the browser steps. An agent should follow these steps in
+order, and stop and tell the user at the first one that fails, quoting the
+error:
 
-1. Run steps 1, 2 and 4, and check the tools. If `docker info` fails, stop and
-   tell the user to start Docker Desktop or run `colima start`. Don't start it
-   unasked.
-2. Stop at step 3 and ask the user to create `.env` themselves. Never create,
-   read, print or log `.env`, and never ask for the keys in the chat.
-3. Start the server (step 5a) in the background, with its output redirected to
-   a log file outside the repo. Don't run it in the foreground.
-4. Verify with `curl -s http://127.0.0.1:8000/api/config`. Report only whether
-   `has_anthropic_key` and `has_bugzilla_key` are `true`.
-5. Tell the user to open <http://127.0.0.1:8000>. Steps 6 and 7 (running a bug,
-   reviewing and posting to Bugzilla) are for the user. Never post to Bugzilla
-   or start a run unasked, because each run costs money.
+1. **Tools (step 1).** Run the checks in step 1. If a tool is missing, list
+   the missing ones and ask before installing anything. If `docker info`
+   fails, ask the user to start Docker Desktop or run `colima start --memory
+   8`. Don't start it unasked.
+   With no Docker, runs need a Firefox the user built (step 5b). Ask for the
+   path to its `firefox` binary. If there is neither, stop: the runner can't
+   run anything.
+2. **Code (step 2).** If the current directory is already a clone of this
+   repo (it has `agents/autowebcompat-etp`), use it and don't clone again.
+3. **UI (step 4).** Build it, and check that
+   `agents/autowebcompat-etp/local_runner/web/dist/index.html` exists.
+4. **Keys (step 3).** Ask the user to create `.env` in the repo root
+   themselves, then wait until they say it's done. Check only that it exists
+   (`test -f .env`). Never create, read, print or log `.env`, and never ask
+   for the keys in the chat.
+5. **Image (Docker only).** Build the agent's image now, so the user's first
+   run doesn't fail on it:
+
+   ```sh
+   docker compose -f agents/autowebcompat-etp/compose.yml --env-file .env build
+   ```
+
+   It takes a few minutes the first time. Redirect the output to a log file
+   outside the repo and read only its last lines. For local-build runs, do
+   the `npm ci` and patch commands from step 5b instead.
+6. **Server (step 5a or 5b).** Start it in the background, with its output
+   redirected to a log file outside the repo, e.g.
+   `~/hackbot/local-runner.log`. Don't run it in the foreground.
+7. **Check.** Within a few seconds the log shows either `Setup check
+   passed.` or `WARNING:` lines, each naming the step to redo. Then run
+   `curl -s http://127.0.0.1:8000/api/config`. `setup_problems` should be
+   `[]`, and `has_anthropic_key` and `has_bugzilla_key` both `true`. Report
+   only those fields and any `WARNING:` lines. If the port is in use, see
+   Troubleshooting.
+8. **Hand over.** Tell the user to open <http://127.0.0.1:8000>, and where the
+   server's log is. A server started by a coding agent can stop when the
+   agent's session ends. Give the user the command from step 5a (or 5b) to
+   run in their own terminal if the page stops responding. Steps 6 and 7
+   (running a bug, reviewing and posting to Bugzilla) are for the user. Never
+   post to Bugzilla or start a run unasked, because each run costs money.
 
 ## Quick start
 
@@ -121,17 +151,28 @@ running. If the image build dies with `error reading from server: EOF`, the VM
 was still starting or ran out of memory. Wait, or `colima restart`, and run
 again.
 
-Open <http://127.0.0.1:8000>. The first run builds the agent's Docker image,
-which takes a few minutes once. After you pull changes to the agent, tick
-**Rebuild image first** on the next run.
+At startup the server checks the steps above and prints `Setup check passed.`,
+or a `WARNING:` line for each problem it finds (the UI isn't built, `.env` or a
+key is missing, the Docker engine isn't running). The same problems show in
+red in the UI's sidebar.
+
+Open <http://127.0.0.1:8000>. Unless you built the image beforehand (`docker
+compose -f agents/autowebcompat-etp/compose.yml --env-file .env build`), the
+first run builds the agent's Docker image, which takes a few minutes once.
+After you pull changes to the agent, tick **Rebuild image first** on the next
+run.
 
 The server stays in the foreground until you stop it. To check that it is up
-and sees your keys, run this in another terminal. Only the two `has_*` fields
-matter, and both should be `true`:
+and sees your keys, run this in another terminal. `setup_problems` should be
+`[]`, and both `has_*` fields `true`:
 
 ```sh
 curl -s http://127.0.0.1:8000/api/config
 ```
+
+When a run fails on a setup problem (the Docker engine stopped, the image
+build failed, Firefox didn't start), the end of its log says so in a
+`[runner] ERROR:` line with what to do.
 
 ### 5b. Or start it with your own Firefox build
 
@@ -155,6 +196,10 @@ LOCAL_FIREFOX=/path/to/obj-dir/dist/Nightly.app/Contents/MacOS/firefox \
 LOCAL_FIREFOX=/path/to/obj-dir/dist/bin/firefox \
   uv run --locked agents/autowebcompat-etp/local_runner/server.py
 ```
+
+At startup the server also checks that `LOCAL_FIREFOX` is an executable file
+and that the DevTools MCP is installed and patched, and prints a `WARNING:`
+line if not.
 
 Open <http://127.0.0.1:8000>. Under **Run in**, choose **Local build**, or
 **Docker** if Docker is also running.
@@ -208,8 +253,9 @@ broker it started for local runs.
 - **The port is in use:** start the server on another port, e.g.
   `PORT=8010 uv run --locked agents/autowebcompat-etp/local_runner/server.py`,
   and open that port.
-- **"... missing (.env not found)" in the UI:** the `.env` file isn't in the
-  repo root, or a key is empty.
+- **"No .env file at ..." or "... is not set" in the UI or the server's
+  output:** the `.env` file isn't in the repo root, or a key is empty. Restart
+  the server after fixing it.
 - **A local-build run fails at once with "Process unexpectedly closed":**
   Firefox didn't start. Run the binary by hand to see why. It's usually a build
   that no longer matches its checkout.
