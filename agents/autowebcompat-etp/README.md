@@ -21,21 +21,25 @@ for the secrets and the browser steps. An agent should follow these steps in
 order, and stop and tell the user at the first one that fails, quoting the
 error:
 
-1. **Tools (step 1).** Run the checks in step 1. If a tool is missing, list
-   the missing ones and ask before installing anything. If `docker info`
-   fails, ask the user to start Docker Desktop or run `colima start --memory
-   8`. Don't start it unasked.
+The "Quick start step" numbers below refer to the sections of the Quick start.
+
+1. **Tools (Quick start step 1).** Run the checks in step 1. If a tool is
+   missing, list the missing ones and ask before installing anything. If
+   `docker info` fails, ask the user to start Docker Desktop or run `colima
+   start --memory 8`. Don't start it unasked. Wait until they say it's
+   running, then run `docker info` again.
    With no Docker, runs need a Firefox the user built (step 5b). Ask for the
    path to its `firefox` binary. If there is neither, stop: the runner can't
    run anything.
-2. **Code (step 2).** If the current directory is already a clone of this
-   repo (it has `agents/autowebcompat-etp`), use it and don't clone again.
-3. **UI (step 4).** Build it, and check that
+2. **Code (Quick start step 2).** If the current directory is already a
+   clone of this repo (it has `agents/autowebcompat-etp`), use it and don't
+   clone again.
+3. **UI (Quick start step 4).** Build it, and check that
    `agents/autowebcompat-etp/local_runner/web/dist/index.html` exists.
-4. **Keys (step 3).** Ask the user to create `.env` in the repo root
-   themselves, then wait until they say it's done. Check only that it exists
-   (`test -f .env`). Never create, read, print or log `.env`, and never ask
-   for the keys in the chat.
+4. **Keys (Quick start step 3).** Ask the user to create `.env` in the repo
+   root themselves, then wait until they say it's done. Check only that it
+   exists (`test -f .env`). Never create, read, print or log `.env`, and
+   never ask for the keys in the chat.
 5. **Image (Docker only).** Build the agent's image now, so the user's first
    run doesn't fail on it:
 
@@ -43,24 +47,39 @@ error:
    docker compose -f agents/autowebcompat-etp/compose.yml --env-file .env build
    ```
 
-   It takes a few minutes the first time. Redirect the output to a log file
-   outside the repo and read only its last lines. For local-build runs, do
-   the `npm ci` and patch commands from step 5b instead.
-6. **Server (step 5a or 5b).** Start it in the background, with its output
-   redirected to a log file outside the repo, e.g.
-   `~/hackbot/local-runner.log`. Don't run it in the foreground.
+   The first build takes several minutes, longer than a coding agent's
+   default command timeout (2 minutes in Claude Code). Run it in the
+   background, or with a timeout of at least 15 minutes. Redirect the output
+   to a log file outside the repo and read only its last lines. For
+   local-build runs, do the `npm ci` and patch commands from step 5b instead.
+6. **Server (Quick start step 5a or 5b).** Start it in the background, with
+   its output redirected to a log file outside the repo, e.g.
+   `~/hackbot/local-runner.log`. Don't run it in the foreground. If port 8000
+   is taken (`lsof -a -iTCP:8000 -sTCP:LISTEN` prints something), start it
+   with `PORT=` set to a free port, and use that port instead of 8000 in the
+   next two steps.
 7. **Check.** Within a few seconds the log shows either `Setup check
-   passed.` or `WARNING:` lines, each naming the step to redo. Then run
-   `curl -s http://127.0.0.1:8000/api/config`. `setup_problems` should be
-   `[]`, and `has_anthropic_key` and `has_bugzilla_key` both `true`. Report
-   only those fields and any `WARNING:` lines. If the port is in use, see
-   Troubleshooting.
-8. **Hand over.** Tell the user to open <http://127.0.0.1:8000>, and where the
-   server's log is. A server started by a coding agent can stop when the
-   agent's session ends. Give the user the command from step 5a (or 5b) to
-   run in their own terminal if the page stops responding. Steps 6 and 7
-   (running a bug, reviewing and posting to Bugzilla) are for the user. Never
-   post to Bugzilla or start a run unasked, because each run costs money.
+   passed.` or `WARNING:` lines, each naming the step to redo. Then check the
+   server and both keys:
+
+   ```sh
+   curl -s http://127.0.0.1:8000/api/config   # setup_problems: [], has_* true
+   curl -s http://127.0.0.1:8000/api/models   # "fallback": false
+   curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/whoami  # 200
+   ```
+
+   `has_*` only says a key is set. `"fallback": true` from `/api/models`
+   means the Anthropic API rejected the key or couldn't be reached; its
+   `error` field says which. A status other than 200 from `/api/whoami`
+   means Bugzilla rejected the key. Report only these results and any
+   `WARNING:` lines, never the keys themselves.
+8. **Hand over.** Tell the user to open <http://127.0.0.1:8000> (or the port
+   from step 6), and where the server's log is. A server started by a coding
+   agent can stop when the agent's session ends. Give the user the command
+   from step 5a (or 5b) to run in their own terminal if the page stops
+   responding. Steps 6 and 7 (running a bug, reviewing and posting to
+   Bugzilla) are for the user. Never post to Bugzilla or start a run unasked,
+   because each run costs money.
 
 ## Quick start
 
